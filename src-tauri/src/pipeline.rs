@@ -730,6 +730,13 @@ impl PipelineHandle {
             return Ok(());
         }
 
+        let duration_ms = self
+            .recording_start
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+            .map(|start| start.elapsed().as_millis() as i64);
+
         let raw_text = self
             .accumulated_text
             .lock()
@@ -738,9 +745,16 @@ impl PipelineHandle {
             .to_string();
 
         if raw_text.is_empty() {
-            let _ = self
-                .app_handle
-                .emit("pipeline:error", "No speech detected. Please try again.");
+            let message = match duration_ms {
+                Some(ms) if ms > 900 => {
+                    "Speech was recorded, but transcription came back empty. Please try again, or switch to Volcengine Standard in Settings."
+                }
+                Some(ms) if ms > 0 => {
+                    "Recording was too short or too quiet. Please hold the hotkey a little longer and speak clearly."
+                }
+                _ => "No speech detected. Please try again.",
+            };
+            let _ = self.app_handle.emit("pipeline:error", message);
             self.set_state(PipelineState::Idle);
             return Ok(());
         }
@@ -833,14 +847,6 @@ impl PipelineHandle {
         }
 
         let total_elapsed = stop_start.elapsed();
-
-        // Compute recording duration
-        let duration_ms = self
-            .recording_start
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-            .map(|start| start.elapsed().as_millis() as i64);
 
         tracing::info!(
             "[Pipeline Timing] Total stop(): {}ms (STT: {}ms, LLM: {}ms, Output+Save: {}ms)",

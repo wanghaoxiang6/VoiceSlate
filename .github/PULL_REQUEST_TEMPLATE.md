@@ -1,6 +1,6 @@
 ## Summary
 
-<!-- What does this PR do and why? -->
+<!-- What changed and why? -->
 
 ## Change Type
 
@@ -10,22 +10,17 @@
 - [ ] Documentation
 - [ ] CI / Infrastructure
 
-## Changes
+## Validation
 
--
-
-## Test Plan
-
-- [ ] Tested locally on [OS]
+- [ ] Tested locally
 - [ ] `npm run build` passes
-- [ ] `npx vitest run` passes
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] No regressions in existing functionality
+- [ ] `npm run test` passes
+- [ ] Windows desktop behavior checked when relevant
 
-## Screenshots / Recordings
+## Screenshots Or Recordings
 
-<!-- If UI changes, attach before/after screenshots -->
+<!-- Attach before/after visuals for UI changes when helpful -->
 
 ## Related Issues
 
-<!-- Fixes #123, Closes #456 -->
+<!-- Fixes #123 -->

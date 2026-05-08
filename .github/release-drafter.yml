@@ -1,28 +1,28 @@
 name-template: 'v$RESOLVED_VERSION'
 tag-template: 'v$RESOLVED_VERSION'
 categories:
-  - title: '🚀 Features'
+  - title: 'Features'
     labels:
       - 'enhancement'
-  - title: '🐛 Bug Fixes'
+  - title: 'Bug Fixes'
     labels:
       - 'bug'
-  - title: '🏗️ Refactoring'
+  - title: 'Refactoring'
     labels:
       - 'refactor'
-  - title: '📝 Documentation'
+  - title: 'Documentation'
     labels:
       - 'docs'
-  - title: '🔧 CI / Infrastructure'
+  - title: 'CI / Infrastructure'
     labels:
       - 'ci'
-  - title: '🌐 Internationalization'
+  - title: 'Internationalization'
     labels:
       - 'i18n'
-  - title: '🔒 Security'
+  - title: 'Security'
     labels:
       - 'security'
-  - title: '📦 Dependencies'
+  - title: 'Dependencies'
     labels:
       - 'dependencies'
 change-template: '- $TITLE @$AUTHOR (#$NUMBER)'
@@ -39,7 +39,7 @@ version-resolver:
       - 'bug'
   default: patch
 template: |
-  ## What's Changed
+  ## VoiceSlate Release Notes
 
   $CHANGES
 

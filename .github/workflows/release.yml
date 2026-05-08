@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v0.1.14)'
+        description: 'Release tag (e.g. v0.1.0)'
         required: true
-        default: 'v0.1.14'
+        default: 'v0.1.0'
 
 permissions:
   contents: write
@@ -75,8 +75,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.event.inputs.tag || github.ref_name }}
-          releaseName: 'OpenTypeless ${{ github.event.inputs.tag || github.ref_name }}'
-          releaseBody: 'See the assets below to download and install.'
+          releaseName: 'VoiceSlate ${{ github.event.inputs.tag || github.ref_name }}'
+          releaseBody: 'See the release notes and assets below to download and install.'
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

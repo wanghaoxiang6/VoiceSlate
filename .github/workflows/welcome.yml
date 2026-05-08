@@ -18,16 +18,16 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           issue-message: |
-            Thanks for opening your first issue! 🎉
+            Thanks for opening your first issue.
 
-            We'll take a look as soon as possible. In the meantime:
-            - Make sure you've filled out the template completely
-            - Check [existing issues](https://github.com/tover0314-w/opentypeless/issues) for duplicates
-            - Join our [Discord](https://discord.gg/V6rRpJ4RGD) if you need quick help
+            Before we dig in:
+            - make sure the issue template is filled out clearly
+            - check existing issues for duplicates
+            - include screenshots or logs when possible
           pr-message: |
-            Thanks for your first pull request! 🎉
+            Thanks for your first pull request.
 
-            A maintainer will review it soon. While you wait:
-            - Make sure CI checks pass
-            - Check the [contributing guide](https://github.com/tover0314-w/opentypeless/blob/main/CONTRIBUTING.md)
-            - Join our [Discord](https://discord.gg/V6rRpJ4RGD) to chat with the team
+            Before review:
+            - make sure CI passes
+            - include a short summary of what changed
+            - attach screenshots when the UI changes

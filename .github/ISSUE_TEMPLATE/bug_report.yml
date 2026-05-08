@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a bug to help us improve OpenTypeless
+description: Report a bug to help improve VoiceSlate
 labels: ["bug"]
 body:
   - type: textarea
@@ -16,7 +16,7 @@ body:
       description: Minimal steps to reproduce the behavior.
       placeholder: |
         1. Go to '...'
-        2. Click on '...'
+        2. Trigger the hotkey or click the capsule
         3. See error
     validations:
       required: true
@@ -35,7 +35,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: OpenTypeless Version
+      label: VoiceSlate Version
       placeholder: e.g. v0.1.0
     validations:
       required: true
@@ -46,8 +46,8 @@ body:
       options:
         - Windows 11
         - Windows 10
-        - macOS 15 (Sequoia)
-        - macOS 14 (Sonoma)
+        - macOS 15
+        - macOS 14
         - Ubuntu 24.04
         - Other Linux
     validations:
@@ -57,13 +57,15 @@ body:
     attributes:
       label: STT Provider
       options:
+        - Volcengine Fast
+        - Volcengine Standard
+        - Local Whisper
         - Deepgram
         - AssemblyAI
         - OpenAI Whisper
         - Groq Whisper
         - GLM-ASR
         - SiliconFlow
-        - Cloud (Pro)
         - N/A
   - type: textarea
     id: logs

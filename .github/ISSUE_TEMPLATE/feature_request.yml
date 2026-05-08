@@ -1,5 +1,5 @@
 name: Feature Request
-description: Suggest an idea for OpenTypeless
+description: Suggest an idea for VoiceSlate
 labels: ["enhancement"]
 body:
   - type: textarea
@@ -13,7 +13,7 @@ body:
     id: solution
     attributes:
       label: Proposed Solution
-      description: Describe the desired behavior or API/UX.
+      description: Describe the desired behavior or UX.
     validations:
       required: true
   - type: textarea

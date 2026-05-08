@@ -4,7 +4,7 @@ import en from './locales/en.json'
 import zh from './locales/zh.json'
 
 const savedLang =
-  typeof localStorage !== 'undefined' ? localStorage.getItem('ui_language') || 'en' : 'en'
+  typeof localStorage !== 'undefined' ? localStorage.getItem('ui_language') || 'zh' : 'zh'
 
 i18n.use(initReactI18next).init({
   resources: {
@@ -12,7 +12,7 @@ i18n.use(initReactI18next).init({
     zh: { translation: zh },
   },
   lng: savedLang,
-  fallbackLng: 'en',
+  fallbackLng: 'zh',
   interpolation: { escapeValue: false },
 })
 

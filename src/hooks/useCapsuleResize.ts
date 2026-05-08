@@ -15,6 +15,7 @@ function getSizeForState(
   if (contextMenuOpen) return { width: 220, height: 220 }
   if (hasError) return { width: 200, height: 36 }
   if (expanded) return { width: 220, height: 90 }
+
   switch (state) {
     case 'idle':
       return { width: 36, height: 36 }
@@ -41,6 +42,8 @@ export function useCapsuleResize() {
   const prevWindowSize = useRef<{ width: number; height: number } | null>(null)
   const prevState = useRef<PipelineState>('idle')
   const prevAutoHide = useRef(false)
+  const isWindows =
+    typeof navigator !== 'undefined' && navigator.platform.toUpperCase().includes('WIN')
 
   const hasError = pipelineError !== null
 
@@ -53,31 +56,26 @@ export function useCapsuleResize() {
       .then(async ({ getCurrentWindow, LogicalSize, LogicalPosition, currentMonitor }) => {
         const win = getCurrentWindow()
 
-        // Auto-hide: show window when leaving idle, hide when entering idle
         const becameIdle = prevState.current !== 'idle' && pipelineState === 'idle'
         const leftIdle = prevState.current === 'idle' && pipelineState !== 'idle'
         prevState.current = pipelineState
 
-        if (capsuleAutoHide && !contextMenuOpen && !capsuleExpanded) {
+        if (!isWindows && capsuleAutoHide && !contextMenuOpen && !capsuleExpanded) {
           if (leftIdle) {
-            // Show window when transitioning from idle to active
             await win.show().catch(() => {})
           } else if (becameIdle && initialized.current) {
-            // Hide window when returning to idle (after initial mount)
             await win.hide().catch(() => {})
             prevAutoHide.current = capsuleAutoHide
             return
           }
         }
 
-        // If auto-hide was just disabled and we're idle, show the capsule
-        if (prevAutoHide.current && !capsuleAutoHide && pipelineState === 'idle') {
+        if (!isWindows && prevAutoHide.current && !capsuleAutoHide && pipelineState === 'idle') {
           await win.show().catch(() => {})
         }
         prevAutoHide.current = capsuleAutoHide
 
         if (!initialized.current) {
-          // First mount: position at bottom-center of screen, then show
           await win.setSize(new LogicalSize(windowWidth, windowHeight)).catch(() => {})
           try {
             const monitor = await currentMonitor()
@@ -88,24 +86,20 @@ export function useCapsuleResize() {
               const y = Math.round(sh - windowHeight - 80)
               await win.setPosition(new LogicalPosition(x, y)).catch(() => {})
             }
-            // If auto-hide is on, don't show on first mount (will show when recording starts)
-            if (!capsuleAutoHide) {
+            if (!capsuleAutoHide || isWindows) {
               await win.show().catch(() => {})
             }
           } catch {
-            /* ignore – monitor info unavailable */
-            if (!capsuleAutoHide) {
+            if (!capsuleAutoHide || isWindows) {
               await win.show().catch(() => {})
             }
           }
+
           initialized.current = true
           prevWindowSize.current = { width: windowWidth, height: windowHeight }
           return
         }
 
-        // Subsequent resizes: left edge + vertical center stay fixed.
-        // Since content is always padded 12px each side, the capsule at x=12
-        // is identical to a centered capsule — so the mic icon never moves.
         const prev = prevWindowSize.current
         if (prev) {
           const pos = await win.outerPosition().catch(() => null)
@@ -127,7 +121,6 @@ export function useCapsuleResize() {
 
         prevWindowSize.current = { width: windowWidth, height: windowHeight }
 
-        // Signal that the window has finished resizing for context menu
         if (contextMenuOpen) {
           setContextMenuReady(true)
         }
@@ -139,6 +132,7 @@ export function useCapsuleResize() {
     hasError,
     contextMenuOpen,
     capsuleAutoHide,
+    isWindows,
     setContextMenuReady,
   ])
 

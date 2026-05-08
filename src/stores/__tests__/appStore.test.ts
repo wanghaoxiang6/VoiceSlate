@@ -27,7 +27,8 @@ describe('appStore', () => {
     it('has sensible defaults', () => {
       const { config } = getState()
       expect(config.theme).toBe('system')
-      expect(config.hotkey).toBe('Ctrl+/')
+      expect(config.hotkey).toBe('AltRight')
+      expect(config.hotkey_mode).toBe('toggle')
       expect(config.output_mode).toBe('keyboard')
       expect(config.polish_enabled).toBe(true)
     })
@@ -44,7 +45,7 @@ describe('appStore', () => {
       const updated = getState().config
 
       expect(updated.theme).toBe('dark')
-      expect(updated.hotkey).toBe('Ctrl+/') // unchanged
+      expect(updated.hotkey).toBe('AltRight') // unchanged
       expect(updated).not.toBe(original) // new object
     })
   })
@@ -63,13 +64,41 @@ describe('appStore', () => {
           app_type: 'browser',
           raw_text: 'hello',
           polished_text: 'Hello.',
+          corrected_text: null,
+          corrected_at: null,
           language: 'en',
           duration_ms: 1200,
+          stt_provider: 'volcengine-flash',
+          llm_provider: 'deepseek',
         },
       ]
       getState().setHistory(entries)
       expect(getState().history).toHaveLength(1)
       expect(getState().history[0].raw_text).toBe('hello')
+    })
+
+    it('stores history stats', () => {
+      getState().setHistoryStats({
+        total_entries: 3,
+        total_duration_ms: 10000,
+        total_characters: 250,
+        estimated_saved_ms: 5000,
+        average_chars_per_minute: 150,
+        month_entries: 2,
+        month_duration_ms: 9000,
+        month_characters: 200,
+        month_llm_input_tokens: 500,
+        month_llm_output_tokens: 250,
+        month_stt_cost_cny: 1.2,
+        month_llm_cost_usd: 0.03,
+        total_llm_input_tokens: 800,
+        total_llm_output_tokens: 400,
+        total_stt_cost_cny: 2.4,
+        total_llm_cost_usd: 0.06,
+      })
+
+      expect(getState().historyStats.total_entries).toBe(3)
+      expect(getState().historyStats.total_characters).toBe(250)
     })
   })
 

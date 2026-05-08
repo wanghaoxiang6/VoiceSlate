@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Mic, FileText, Sparkles, Type, Keyboard, Check } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
 import { CapsuleLogo } from '../Capsule/CapsuleLogo'
+import { formatHotkeyLabel } from '../../lib/hotkey'
 
 type DemoPhase = 'idle' | 'recording' | 'transcribing' | 'polishing' | 'complete'
 
@@ -25,22 +26,15 @@ const STAGES = [
 const DEMO_RAW = 'hello um can you help me with this'
 const DEMO_POLISHED = 'Hello, can you help me with this?'
 
-const PHASE_DESC: Record<DemoPhase, string> = {
-  idle: 'Press the hotkey to start',
-  recording: 'Speaking...',
-  transcribing: 'Converting speech to text',
-  polishing: 'AI refines your words',
-  complete: 'Done — typed into your app',
-}
-
 export function QuickTestStep() {
   const config = useAppStore((s) => s.config)
   const [phase, setPhase] = useState<DemoPhase>('idle')
   const [rawChars, setRawChars] = useState(0)
   const [polishedChars, setPolishedChars] = useState(0)
   const [seconds, setSeconds] = useState(0)
+  const displayHotkey = formatHotkeyLabel(config.hotkey)
+  const isZh = config.ui_language === 'zh'
 
-  // Auto-advance through demo phases in a loop
   useEffect(() => {
     const idx = PHASE_SEQUENCE.indexOf(phase)
     const next = PHASE_SEQUENCE[(idx + 1) % PHASE_SEQUENCE.length]
@@ -55,7 +49,6 @@ export function QuickTestStep() {
     return () => clearTimeout(timer)
   }, [phase])
 
-  // Recording second counter
   useEffect(() => {
     if (phase !== 'recording') return
     setSeconds(0)
@@ -63,7 +56,6 @@ export function QuickTestStep() {
     return () => clearInterval(timer)
   }, [phase])
 
-  // Typewriter: raw text during transcribing
   useEffect(() => {
     if (phase !== 'transcribing') return
     setRawChars(0)
@@ -80,7 +72,6 @@ export function QuickTestStep() {
     return () => clearInterval(timer)
   }, [phase])
 
-  // Typewriter: polished text during polishing
   useEffect(() => {
     if (phase !== 'polishing') return
     setPolishedChars(0)
@@ -98,15 +89,21 @@ export function QuickTestStep() {
   }, [phase])
 
   const activeIdx = STAGES.findIndex((s) => s.key === phase)
-
   const isActive = phase !== 'idle'
   const capsuleClass = isActive
     ? 'jelly-capsule-active text-white'
     : 'jelly-capsule text-neutral-700'
 
+  const phaseDesc: Record<DemoPhase, string> = {
+    idle: isZh ? '按热键开始' : 'Press the hotkey to start',
+    recording: isZh ? '正在录音…' : 'Speaking...',
+    transcribing: isZh ? '正在转写…' : 'Converting speech to text',
+    polishing: isZh ? '正在润色…' : 'AI refines your words',
+    complete: isZh ? '已完成并输出' : 'Done - typed into your app',
+  }
+
   return (
     <div className="space-y-4">
-      {/* Hotkey hint — pulses on idle to draw attention */}
       <div className="flex justify-center">
         <motion.div
           className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-bg-secondary rounded-[8px] border border-border"
@@ -119,16 +116,21 @@ export function QuickTestStep() {
         >
           <Keyboard size={12} className="text-text-tertiary" />
           <span className="text-[11px] text-text-secondary">
-            {config.hotkey_mode === 'hold' ? 'Hold' : 'Press'}{' '}
+            {config.hotkey_mode === 'hold' ? (isZh ? '按住' : 'Hold') : isZh ? '按一下' : 'Press'}{' '}
             <kbd className="px-1 py-0.5 bg-bg-tertiary rounded-[4px] text-[11px] font-mono text-text-primary font-medium border border-border">
-              {config.hotkey}
+              {displayHotkey}
             </kbd>{' '}
-            {config.hotkey_mode === 'hold' ? 'to talk' : 'to start/stop'}
+            {config.hotkey_mode === 'hold'
+              ? isZh
+                ? '开始说话'
+                : 'to talk'
+              : isZh
+                ? '开始或结束录音'
+                : 'to start/stop'}
           </span>
         </motion.div>
       </div>
 
-      {/* Capsule preview — mimics the real desktop capsule */}
       <div className="flex flex-col items-center gap-2">
         <div className="relative">
           <motion.div
@@ -166,7 +168,6 @@ export function QuickTestStep() {
             </div>
           </motion.div>
 
-          {/* Pulse ring while recording */}
           {phase === 'recording' && (
             <motion.div
               className="absolute inset-0 rounded-full border-2 border-neutral-400/30"
@@ -176,7 +177,6 @@ export function QuickTestStep() {
           )}
         </div>
 
-        {/* Phase label — crossfade on change */}
         <AnimatePresence mode="wait">
           <motion.p
             key={phase}
@@ -186,12 +186,11 @@ export function QuickTestStep() {
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.12 }}
           >
-            {PHASE_DESC[phase]}
+            {phaseDesc[phase]}
           </motion.p>
         </AnimatePresence>
       </div>
 
-      {/* Pipeline step indicators */}
       <div className="flex items-center justify-center gap-0.5">
         {STAGES.map((stage, i) => {
           const Icon = stage.icon
@@ -229,7 +228,6 @@ export function QuickTestStep() {
         })}
       </div>
 
-      {/* Stage output card — shows what each stage produces */}
       <AnimatePresence mode="wait">
         {phase !== 'idle' && (
           <motion.div
@@ -258,7 +256,7 @@ export function QuickTestStep() {
 
             {phase === 'transcribing' && (
               <div>
-                <StageLabel>Transcribing</StageLabel>
+                <StageLabel>{isZh ? '转写结果' : 'Transcribing'}</StageLabel>
                 <p className="text-text-secondary">
                   {DEMO_RAW.slice(0, rawChars)}
                   <BlinkingCursor color="bg-text-tertiary" />
@@ -269,11 +267,11 @@ export function QuickTestStep() {
             {phase === 'polishing' && (
               <div className="space-y-2">
                 <div>
-                  <StageLabel>Raw</StageLabel>
+                  <StageLabel>{isZh ? '原始文本' : 'Raw'}</StageLabel>
                   <p className="text-text-tertiary line-through">{DEMO_RAW}</p>
                 </div>
                 <div>
-                  <StageLabel>Polished</StageLabel>
+                  <StageLabel>{isZh ? '润色结果' : 'Polished'}</StageLabel>
                   <p className="text-[13px] text-text-primary">
                     {DEMO_POLISHED.slice(0, polishedChars)}
                     <BlinkingCursor color="bg-accent" />
@@ -285,11 +283,11 @@ export function QuickTestStep() {
             {phase === 'complete' && (
               <div className="space-y-2">
                 <div>
-                  <StageLabel>Raw</StageLabel>
+                  <StageLabel>{isZh ? '原始文本' : 'Raw'}</StageLabel>
                   <p className="text-text-tertiary line-through">{DEMO_RAW}</p>
                 </div>
                 <div>
-                  <StageLabel>Result</StageLabel>
+                  <StageLabel>{isZh ? '最终结果' : 'Result'}</StageLabel>
                   <p className="text-[13px] text-text-primary">{DEMO_POLISHED}</p>
                 </div>
               </div>
@@ -301,7 +299,6 @@ export function QuickTestStep() {
   )
 }
 
-/** Fake waveform bars — fixed heights, staggered animation */
 function FakeWaveform() {
   const bars = [6, 12, 8, 15, 5, 11, 4]
   return (
@@ -323,7 +320,6 @@ function FakeWaveform() {
   )
 }
 
-/** Blinking text cursor */
 function BlinkingCursor({ color }: { color: string }) {
   return (
     <motion.span
@@ -334,7 +330,6 @@ function BlinkingCursor({ color }: { color: string }) {
   )
 }
 
-/** Small label above stage output */
 function StageLabel({ children }: { children: React.ReactNode }) {
   return <p className="text-[11px] text-text-tertiary mb-0.5">{children}</p>
 }

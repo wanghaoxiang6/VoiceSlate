@@ -43,7 +43,11 @@ jelly-reference*.png
 
 # Database files
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
+*.sqlite-shm
+*.sqlite-wal
 
 # Internal design docs (not for public distribution)
 docs/superpowers/

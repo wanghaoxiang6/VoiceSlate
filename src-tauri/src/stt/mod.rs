@@ -1,12 +1,14 @@
 pub mod assemblyai;
 pub mod cloud;
 pub mod deepgram;
+pub mod volcengine;
 pub mod whisper_compat;
 
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use volcengine::{VolcengineFlashProvider, VolcengineStandardProvider};
 use whisper_compat::{WhisperCompatConfig, WhisperCompatProvider};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +71,14 @@ pub fn create_provider(
             }
         }
         "assemblyai" => Box::new(assemblyai::AssemblyAiProvider::new()),
+        "volcengine-flash" => Box::new(VolcengineFlashProvider::new()),
+        "volcengine-standard" => Box::new(VolcengineStandardProvider::new()),
+        "local-whisper" => make(WhisperCompatConfig {
+            provider_name: "Local Whisper",
+            endpoint: "http://127.0.0.1:8178/v1/audio/transcriptions",
+            model: "base",
+            extra_fields: &[],
+        }),
         "glm-asr" => make(WhisperCompatConfig {
             provider_name: "GLM-ASR",
             endpoint: "https://open.bigmodel.cn/api/paas/v4/audio/transcriptions",

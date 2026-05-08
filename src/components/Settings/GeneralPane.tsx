@@ -5,6 +5,7 @@ import type { HotkeyMode, OutputMode } from '../../stores/appStore'
 import { updateHotkey, pauseHotkey, resumeHotkey, checkAccessibilityPermission, requestAccessibilityPermission } from '../../lib/tauri'
 import { SegmentedControl } from './shared/SegmentedControl'
 import { Toggle } from './shared/Toggle'
+import { formatHotkeyLabel } from '../../lib/hotkey'
 
 // Keys that can be used as hotkeys without a modifier
 const STANDALONE_KEYS = new Set([
@@ -36,6 +37,13 @@ const STANDALONE_KEYS = new Set([
   'F11',
   'F12',
 ])
+
+const SINGLE_SIDE_KEYS: Record<string, string> = {
+  AltRight: 'AltRight',
+  AltLeft: 'AltLeft',
+  ControlRight: 'ControlRight',
+  ControlLeft: 'ControlLeft',
+}
 
 function HotkeyRecorder() {
   const config = useAppStore((s) => s.config)
@@ -70,6 +78,17 @@ function HotkeyRecorder() {
     (e: KeyboardEvent) => {
       e.preventDefault()
       e.stopPropagation()
+
+      const sideKey = SINGLE_SIDE_KEYS[e.code]
+      if (sideKey) {
+        setModifierHint(null)
+        setPending(sideKey)
+        if (autoConfirmTimer.current) clearTimeout(autoConfirmTimer.current)
+        autoConfirmTimer.current = setTimeout(() => {
+          confirmHotkey(sideKey)
+        }, 600)
+        return
+      }
 
       // Build modifier prefix
       const parts: string[] = []
@@ -169,7 +188,11 @@ function HotkeyRecorder() {
             : 'bg-bg-secondary border-transparent text-text-primary hover:border-border'
         }`}
       >
-        {recording ? pending || modifierHint || t('settings.pressKeyCombination') : config.hotkey}
+        {recording
+          ? pending
+            ? formatHotkeyLabel(pending)
+            : modifierHint || t('settings.pressKeyCombination')
+          : formatHotkeyLabel(config.hotkey)}
       </button>
       {recording && pending && (
         <p className="text-[11px] text-text-tertiary mt-1.5">{t('settings.clickToConfirm')}</p>

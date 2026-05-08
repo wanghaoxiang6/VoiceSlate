@@ -1,37 +1,13 @@
-# Security Policy
+# Security
 
-## Reporting a Vulnerability
+This repository is a local-first open-source fork. Before publishing it publicly, update this file with your own security contact path.
 
-Please report security vulnerabilities through [GitHub Security Advisories](https://github.com/tover0314-w/opentypeless/security/advisories/new).
+## Current Guidance
 
-**Do not open a public issue for security vulnerabilities.**
+- Do not commit API keys, local settings, databases, or credential-bearing logs.
+- Review build scripts and release artifacts before distribution.
+- If you expose any hosted backend in the future, document your disclosure process here.
 
-Your report should include:
+## BYOK Note
 
-- A descriptive title
-- Severity assessment (Critical / High / Medium / Low)
-- Affected component(s)
-- Steps to reproduce
-- Impact description
-
-We will acknowledge your report within 72 hours and aim to release a fix within 14 days for critical issues.
-
-## Security Model
-
-OpenTypeless follows a **Bring Your Own Key (BYOK)** model:
-
-- All API keys are stored locally on the user's machine via `tauri-plugin-store`
-- No cloud account or server-side storage is required for the core product
-- Audio data is sent directly from the user's machine to the chosen STT/LLM provider
-- Cloud proxy mode requires authentication via session token
-- The application does not collect telemetry or usage data
-- CSP is enabled in the Tauri webview
-
-## Out of Scope
-
-The following are not considered vulnerabilities:
-
-- Prompt injection in LLM responses (no security boundary to bypass)
-- Users exposing their own API keys through misconfiguration
-- Issues requiring physical access to the user's machine
-- Vulnerabilities in third-party STT/LLM provider APIs
+This project follows a bring-your-own-key model for most real usage. Users should store their own provider credentials locally and rotate them if they are ever exposed.

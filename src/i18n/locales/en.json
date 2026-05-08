@@ -1,6 +1,6 @@
 {
   "app": {
-    "name": "OpenTypeless",
+    "name": "VoiceSlate",
     "tagline": "AI Voice Input",
     "loading": "Loading...",
     "failedToLoad": "Failed to load application data.",
@@ -15,7 +15,7 @@
     "pro": "Pro"
   },
   "home": {
-    "welcome": "Welcome to OpenTypeless",
+    "welcome": "Welcome to VoiceSlate",
     "description": "Hold {{hotkey}} to start voice recording. Your speech will be transcribed and optionally polished by AI.",
     "totalRecordings": "Total Recordings",
     "today": "Today",
@@ -31,7 +31,7 @@
     "outputMode": "Output Mode"
   },
   "onboarding": {
-    "welcomeTitle": "Welcome to OpenTypeless",
+    "welcomeTitle": "Welcome to VoiceSlate",
     "welcomeSubtitle": "A few quick steps to get started with voice input",
     "speechRecognition": "Speech Recognition",
     "speechRecognitionDesc": "Configure your ASR service to convert speech to text",
@@ -126,7 +126,7 @@
     "test": "Test",
     "connectionSuccess": "Connection successful",
     "connectionFailed": "Connection failed",
-    "storedLocally": "Stored locally on your device. Never sent to OpenTypeless servers.",
+    "storedLocally": "Stored locally on your device. Never sent to a VoiceSlate-hosted service by default.",
     "sttLanguage": "Language",
     "model": "Model",
     "fetchModels": "Fetch available models",

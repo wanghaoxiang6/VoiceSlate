@@ -1,5 +1,5 @@
 {
-  "name": "opentypeless",
+  "name": "voiceslate",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -14,13 +14,13 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/tover0314-w/opentypeless"
+    "url": "https://github.com/wanghaoxiang6/VoiceSlate.git"
   },
-  "homepage": "https://www.opentypeless.com",
+  "homepage": "https://github.com/wanghaoxiang6/VoiceSlate",
   "bugs": {
-    "url": "https://github.com/tover0314-w/opentypeless/issues"
+    "url": "https://github.com/wanghaoxiang6/VoiceSlate/issues"
   },
-  "author": "OpenTypeless Contributors",
+  "author": "VoiceSlate Contributors",
   "license": "MIT",
   "scripts": {
     "dev": "vite",

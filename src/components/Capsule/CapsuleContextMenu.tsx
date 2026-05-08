@@ -48,7 +48,7 @@ export function CapsuleContextMenu({ onClose }: Props) {
     },
     {
       icon: CircleUser,
-      label: 'Account',
+      label: 'Local Edition',
       onClick: () => {
         openMainWindow('#/account')
         onClose()
@@ -56,7 +56,7 @@ export function CapsuleContextMenu({ onClose }: Props) {
     },
     {
       icon: Crown,
-      label: 'Upgrade',
+      label: 'BYOK Guide',
       onClick: () => {
         openMainWindow('#/upgrade')
         onClose()

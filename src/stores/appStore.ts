@@ -3,6 +3,9 @@ import { create } from 'zustand'
 export type PipelineState = 'idle' | 'recording' | 'transcribing' | 'polishing' | 'outputting'
 
 export type SttProvider =
+  | 'volcengine-flash'
+  | 'volcengine-standard'
+  | 'local-whisper'
   | 'deepgram'
   | 'assemblyai'
   | 'glm-asr'
@@ -34,8 +37,31 @@ export interface HistoryEntry {
   app_type: string
   raw_text: string
   polished_text: string
+  corrected_text: string | null
+  corrected_at: string | null
   language: string | null
   duration_ms: number | null
+  stt_provider: string | null
+  llm_provider: string | null
+}
+
+export interface HistoryStats {
+  total_entries: number
+  total_duration_ms: number
+  total_characters: number
+  estimated_saved_ms: number
+  average_chars_per_minute: number
+  month_entries: number
+  month_duration_ms: number
+  month_characters: number
+  month_llm_input_tokens: number
+  month_llm_output_tokens: number
+  month_stt_cost_cny: number
+  month_llm_cost_usd: number
+  total_llm_input_tokens: number
+  total_llm_output_tokens: number
+  total_stt_cost_cny: number
+  total_llm_cost_usd: number
 }
 
 export interface DictionaryEntry {
@@ -98,6 +124,8 @@ interface AppState {
   // History
   history: HistoryEntry[]
   setHistory: (h: HistoryEntry[]) => void
+  historyStats: HistoryStats
+  setHistoryStats: (stats: HistoryStats) => void
 
   // Dictionary
   dictionary: DictionaryEntry[]
@@ -158,18 +186,18 @@ const isMac =
   typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0
 
 const defaultConfig: AppConfig = {
-  stt_provider: 'glm-asr',
-  stt_api_key: '',
+  stt_provider: 'local-whisper',
+  stt_api_key: 'local-whisper',
   stt_language: 'multi',
-  llm_provider: 'openrouter',
+  llm_provider: 'deepseek',
   llm_api_key: '',
-  llm_model: 'google/gemini-2.5-flash',
-  llm_base_url: 'https://openrouter.ai/api/v1',
+  llm_model: 'deepseek-v4-flash',
+  llm_base_url: 'https://api.deepseek.com/v1',
   polish_enabled: true,
   translate_enabled: false,
   target_lang: 'en',
-  hotkey: isMac ? 'Alt+/' : 'Ctrl+/',
-  hotkey_mode: 'hold',
+  hotkey: isMac ? 'Alt+/' : 'AltRight',
+  hotkey_mode: isMac ? 'hold' : 'toggle',
   output_mode: 'keyboard',
   selected_text_enabled: false,
   theme: 'system',
@@ -177,7 +205,7 @@ const defaultConfig: AppConfig = {
   close_to_tray: true,
   start_minimized: false,
   max_recording_seconds: 30,
-  ui_language: 'en',
+  ui_language: 'zh',
   capsule_auto_hide: false,
 }
 
@@ -205,6 +233,25 @@ export const useAppStore = create<AppState>((set) => ({
 
   history: [],
   setHistory: (history) => set({ history }),
+  historyStats: {
+    total_entries: 0,
+    total_duration_ms: 0,
+    total_characters: 0,
+    estimated_saved_ms: 0,
+    average_chars_per_minute: 0,
+    month_entries: 0,
+    month_duration_ms: 0,
+    month_characters: 0,
+    month_llm_input_tokens: 0,
+    month_llm_output_tokens: 0,
+    month_stt_cost_cny: 0,
+    month_llm_cost_usd: 0,
+    total_llm_input_tokens: 0,
+    total_llm_output_tokens: 0,
+    total_stt_cost_cny: 0,
+    total_llm_cost_usd: 0,
+  },
+  setHistoryStats: (historyStats) => set({ historyStats }),
 
   dictionary: [],
   setDictionary: (dictionary) => set({ dictionary }),

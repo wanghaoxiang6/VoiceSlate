@@ -1,179 +1,101 @@
-import { useState } from 'react'
-import { useTranslation } from 'react-i18next'
-import { Check, Crown, Loader2 } from 'lucide-react'
-import { openUrl } from '@tauri-apps/plugin-opener'
-import { useAuthStore } from '../../stores/authStore'
-import { PRO_PLAN } from '../../lib/constants'
-import { createCheckout } from '../../lib/api'
+import { Check, Crown, KeyRound, Mic, Sparkles, Cpu } from 'lucide-react'
+
+const RECIPES = [
+  {
+    title: 'One-key OpenAI setup',
+    icon: KeyRound,
+    tone: 'text-accent',
+    summary: 'Use one OpenAI API key for both transcription and polish.',
+    steps: [
+      'STT provider: OpenAI Whisper',
+      'LLM provider: OpenAI',
+      'Paste the same OpenAI API key into both fields',
+      'Recommended when you want the simplest setup',
+    ],
+  },
+  {
+    title: 'Low-cost cloud setup',
+    icon: Sparkles,
+    tone: 'text-emerald-600',
+    summary: 'Use a cheap STT provider and pair it with DeepSeek for polish.',
+    steps: [
+      'STT provider: Groq Whisper or OpenAI Whisper',
+      'LLM provider: DeepSeek',
+      'Add the STT key and the DeepSeek key separately',
+      'Recommended when you want lower recurring cost',
+    ],
+  },
+  {
+    title: 'Fully local setup',
+    icon: Cpu,
+    tone: 'text-amber-600',
+    summary: 'Run your own local stack without relying on a hosted LLM.',
+    steps: [
+      'LLM provider: Ollama',
+      'Base URL: http://localhost:11434/v1',
+      'STT provider: connect any Whisper-compatible local endpoint you prefer',
+      'Recommended when privacy matters most',
+    ],
+  },
+] as const
 
 export function UpgradePage() {
-  const { user, plan, sttSecondsUsed, sttSecondsLimit, llmTokensUsed, llmTokensLimit } =
-    useAuthStore()
-  const { t } = useTranslation()
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const isPro = plan === 'pro'
-
-  const handleSubscribe = async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const { url } = await createCheckout('desktop')
-      useAuthStore.setState({ checkoutPending: true })
-      await openUrl(url)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to create checkout')
-    } finally {
-      setLoading(false)
-    }
-  }
-
   return (
-    <div className="max-w-[480px] mx-auto py-8 px-6 text-[13px]">
-      {/* Header */}
-      <div className="text-center mb-6">
+    <div className="max-w-[720px] mx-auto py-8 px-6 text-[13px] space-y-6">
+      <div className="text-center mb-2">
         <div className="inline-flex items-center gap-2 mb-2">
           <Crown size={20} className="text-amber-500" />
-          <h1 className="text-[20px] font-semibold text-text-primary">{t('upgrade.title')}</h1>
+          <h1 className="text-[20px] font-semibold text-text-primary">BYOK Guide</h1>
         </div>
-        <p className="text-text-secondary">{t('upgrade.subtitle')}</p>
+        <p className="text-text-secondary">
+          This edition keeps the familiar workflow but defaults to your own providers instead of
+          any hosted Pro flow.
+        </p>
       </div>
 
-      {/* Current plan badge */}
-      <div className="flex items-center justify-center mb-6">
-        <span
-          className={`px-3 py-1 rounded-full text-[12px] font-medium ${
-            isPro ? 'bg-amber-500/10 text-amber-600' : 'bg-bg-secondary text-text-secondary'
-          }`}
-        >
-          {t('upgrade.currentPlan', { plan: isPro ? t('upgrade.pro') : t('upgrade.free') })}
-        </span>
-      </div>
-
-      {/* Pricing card */}
-      <div className="border border-border rounded-[10px] overflow-hidden mb-5">
-        <div className="px-4 py-4 bg-bg-secondary/50 border-b border-border">
-          <p className="text-[22px] font-semibold text-text-primary">
-            {PRO_PLAN.price}
-            <span className="text-[13px] font-normal text-text-secondary">
-              {' '}
-              / {PRO_PLAN.period}
-            </span>
-          </p>
-        </div>
-
-        {/* Features */}
-        <div>
-          {PRO_PLAN.features.map((f) => (
-            <div
-              key={f.label}
-              className="flex items-start gap-2.5 px-4 py-2.5 border-b border-border last:border-b-0"
-            >
-              <Check size={14} className="text-green-500 mt-0.5 shrink-0" />
-              <div>
-                <span className="text-text-primary">{f.label}</span>
-                <span className="text-text-tertiary ml-1.5 text-[12px]">{f.detail}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Pro quota progress */}
-      {isPro && (
-        <div className="border border-border rounded-[10px] overflow-hidden mb-5">
-          <div className="px-4 py-2.5 bg-bg-secondary/50 border-b border-border">
-            <h3 className="text-[13px] font-medium text-text-primary">
-              {t('upgrade.usageThisMonth')}
-            </h3>
-          </div>
-          <div className="px-4 py-3 space-y-3">
-            <QuotaBar
-              label={t('upgrade.stt')}
-              used={sttSecondsUsed}
-              limit={sttSecondsLimit}
-              unit="hours"
-              divisor={3600}
-            />
-            <QuotaBar
-              label={t('upgrade.llm')}
-              used={llmTokensUsed}
-              limit={llmTokensLimit}
-              unit="k tokens"
-              divisor={1000}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Action */}
-      {isPro ? (
-        <div className="text-center py-3">
-          <p className="text-text-secondary flex items-center justify-center gap-1.5">
-            <Crown size={14} className="text-amber-500" />
-            {t('upgrade.thankYou')}
-          </p>
-        </div>
-      ) : (
-        <>
-          {!user && (
-            <p className="text-text-tertiary text-[12px] text-center mb-3">
-              {t('upgrade.signInFirst')}
+      <div className="rounded-[14px] border border-border bg-bg-secondary/50 px-4 py-4">
+        <div className="flex items-start gap-3">
+          <Mic size={18} className="text-text-secondary mt-0.5 shrink-0" />
+          <div className="space-y-2">
+            <h2 className="text-[14px] font-medium text-text-primary">Important note</h2>
+            <p className="text-text-secondary leading-relaxed">
+              DeepSeek is an LLM provider, not a speech-to-text provider. If you choose DeepSeek for
+              polish, you still need an STT provider such as OpenAI Whisper, Groq Whisper,
+              Deepgram, or a local Whisper-compatible endpoint.
             </p>
-          )}
-          <button
-            onClick={handleSubscribe}
-            disabled={loading || !user}
-            className="w-full py-2.5 rounded-[8px] bg-accent text-white text-[13px] font-medium cursor-pointer border-none hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            {loading && <Loader2 size={14} className="animate-spin" />}
-            {t('upgrade.subscribeToPro')}
-          </button>
-          {error && <p className="text-red-500 text-[12px] mt-2 text-center">{error}</p>}
-        </>
-      )}
-    </div>
-  )
-}
-
-function QuotaBar({
-  label,
-  used,
-  limit,
-  unit,
-  divisor,
-}: {
-  label: string
-  used: number
-  limit: number
-  unit: string
-  divisor: number
-}) {
-  const pct = limit > 0 ? Math.min((used / limit) * 100, 100) : 0
-  const usedDisplay = (used / divisor).toFixed(1)
-  const limitDisplay = (limit / divisor).toFixed(1)
-
-  return (
-    <div className="space-y-1">
-      <div className="flex justify-between text-[12px]">
-        <span className="text-text-secondary">{label}</span>
-        <span className="text-text-tertiary">
-          {usedDisplay} / {limitDisplay} {unit}
-        </span>
+          </div>
+        </div>
       </div>
-      <div
-        className="h-1.5 bg-bg-secondary rounded-full overflow-hidden"
-        role="progressbar"
-        aria-valuenow={pct}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-label={`${label} usage: ${usedDisplay} of ${limitDisplay} ${unit}`}
-      >
-        <div
-          className={`h-full rounded-full transition-all ${pct > 90 ? 'bg-red-500' : 'bg-accent'}`}
-          style={{ width: `${pct}%` }}
-        />
+
+      <div className="grid gap-4 md:grid-cols-3">
+        {RECIPES.map(({ title, icon: Icon, tone, summary, steps }) => (
+          <div key={title} className="rounded-[14px] border border-border overflow-hidden">
+            <div className="px-4 py-4 bg-bg-secondary/50 border-b border-border">
+              <div className="flex items-center gap-2">
+                <Icon size={16} className={tone} />
+                <h3 className="text-[14px] font-medium text-text-primary">{title}</h3>
+              </div>
+              <p className="text-[12px] text-text-secondary mt-2 leading-relaxed">{summary}</p>
+            </div>
+            <div className="px-4 py-3 space-y-2.5">
+              {steps.map((step) => (
+                <div key={step} className="flex items-start gap-2">
+                  <Check size={13} className="text-green-500 mt-0.5 shrink-0" />
+                  <span className="text-[12px] text-text-primary">{step}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-[14px] border border-border bg-bg-secondary/50 px-4 py-4 space-y-2">
+        <h2 className="text-[14px] font-medium text-text-primary">Recommended first test</h2>
+        <p className="text-text-secondary leading-relaxed">
+          If you just want to get this running fast, start with OpenAI Whisper for STT and OpenAI
+          for the LLM. Once the full pipeline works, you can switch only the LLM provider to
+          DeepSeek in Settings and keep the rest of the interface unchanged.
+        </p>
       </div>
     </div>
   )

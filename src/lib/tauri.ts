@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { AppConfig, HistoryEntry, DictionaryEntry } from '../stores/appStore'
+import type { AppConfig, HistoryEntry, DictionaryEntry, HistoryStats } from '../stores/appStore'
 
 // Pipeline commands
 export async function startRecording(): Promise<void> {
@@ -72,6 +72,17 @@ export async function resumeHotkey(): Promise<void> {
 // History
 export async function getHistory(limit: number, offset: number): Promise<HistoryEntry[]> {
   return invoke('get_history', { limit, offset })
+}
+
+export async function updateHistoryCorrection(
+  id: number,
+  correctedText: string | null,
+): Promise<void> {
+  return invoke('update_history_correction', { id, correctedText })
+}
+
+export async function getHistoryStats(): Promise<HistoryStats> {
+  return invoke('get_history_stats')
 }
 
 export async function clearHistory(): Promise<void> {

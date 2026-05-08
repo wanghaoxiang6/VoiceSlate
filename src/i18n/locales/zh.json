@@ -1,6 +1,6 @@
 {
   "app": {
-    "name": "OpenTypeless",
+    "name": "VoiceSlate",
     "tagline": "AI 语音输入",
     "loading": "加载中...",
     "failedToLoad": "加载应用数据失败。",
@@ -15,7 +15,7 @@
     "pro": "Pro"
   },
   "home": {
-    "welcome": "欢迎使用 OpenTypeless",
+    "welcome": "欢迎使用 VoiceSlate",
     "description": "按住 {{hotkey}} 开始语音录制。语音将被转录并可选择由 AI 润色。",
     "totalRecordings": "总录音数",
     "today": "今日",
@@ -31,7 +31,7 @@
     "outputMode": "输出模式"
   },
   "onboarding": {
-    "welcomeTitle": "欢迎使用 OpenTypeless",
+    "welcomeTitle": "欢迎使用 VoiceSlate",
     "welcomeSubtitle": "几个简单步骤，即可开始语音输入",
     "speechRecognition": "语音识别",
     "speechRecognitionDesc": "配置 ASR 服务，将语音转换为文字",
@@ -126,7 +126,7 @@
     "test": "测试",
     "connectionSuccess": "连接成功",
     "connectionFailed": "连接失败",
-    "storedLocally": "存储在本地设备上。绝不会发送到 OpenTypeless 服务器。",
+    "storedLocally": "保存在本地设备上，默认不会发送到 VoiceSlate 托管服务。",
     "sttLanguage": "语言",
     "model": "模型",
     "fetchModels": "获取可用模型",

@@ -14,11 +14,15 @@ use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_store::StoreExt;
 use tracing_subscriber::EnvFilter;
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 /// Default cloud API base URL. Override with the `API_BASE_URL` environment variable.
-pub const DEFAULT_API_BASE_URL: &str = "https://www.opentypeless.com";
+pub const DEFAULT_API_BASE_URL: &str = "https://example.invalid";
 
 /// Read the cloud API base URL from the environment, falling back to the compiled default.
 pub fn api_base_url() -> String {
@@ -28,6 +32,19 @@ pub fn api_base_url() -> String {
 /// Cached hotkey mode to avoid loading config from disk on every keypress.
 /// Updated whenever config is saved.
 struct HotkeyModeCache(Arc<Mutex<String>>);
+
+/// Cached hotkey binding string so custom Windows hooks can follow changes.
+struct HotkeyBindingCache(Arc<Mutex<String>>);
+
+/// Whether hotkey handling is temporarily paused while recording settings shortcuts.
+struct HotkeyPausedCache(Arc<AtomicBool>);
+
+/// Suppress duplicate press events when multiple Windows hotkey paths fire at once.
+struct HotkeyPressGuard(Arc<Mutex<Option<Instant>>>);
+
+#[cfg(target_os = "windows")]
+static WINDOWS_ALT_HOOK_APP: LazyLock<Mutex<Option<tauri::AppHandle>>> =
+    LazyLock::new(|| Mutex::new(None));
 
 /// Cached close_to_tray setting to avoid blocking I/O in the window close handler.
 struct CloseToTrayCache(Arc<Mutex<bool>>);
@@ -84,7 +101,7 @@ fn build_tray_menu(
     let history = MenuItem::with_id(app, "history", "History", true, None::<&str>)?;
     let account = MenuItem::with_id(app, "account", "Account", true, None::<&str>)?;
     let sep3 = PredefinedMenuItem::separator(app)?;
-    let about = MenuItem::with_id(app, "about", "About OpenTypeless", true, None::<&str>)?;
+    let about = MenuItem::with_id(app, "about", "About VoiceSlate", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
     let menu = Menu::with_items(
@@ -153,10 +170,12 @@ async fn get_config(
 async fn update_config(
     state: tauri::State<'_, storage::ConfigManager>,
     cache: tauri::State<'_, HotkeyModeCache>,
+    hotkey_cache: tauri::State<'_, HotkeyBindingCache>,
     close_tray_cache: tauri::State<'_, CloseToTrayCache>,
     config: storage::AppConfig,
 ) -> Result<(), String> {
     *cache.0.lock().unwrap_or_else(|e| e.into_inner()) = config.hotkey_mode.clone();
+    *hotkey_cache.0.lock().unwrap_or_else(|e| e.into_inner()) = config.hotkey.clone();
     *close_tray_cache.0.lock().unwrap_or_else(|e| e.into_inner()) = config.close_to_tray;
     state.save(&config).await.map_err(|e| e.to_string())
 }
@@ -197,11 +216,21 @@ async fn test_stt_connection(
         return Ok(body["plan"].as_str() == Some("pro"));
     }
 
-    if api_key.is_empty() {
+    if api_key.is_empty() && provider != "local-whisper" {
         return Ok(false);
     }
 
     match provider.as_str() {
+        "local-whisper" => {
+            let client = reqwest::Client::new();
+            let resp = client
+                .get("http://127.0.0.1:8178/health")
+                .timeout(std::time::Duration::from_secs(5))
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(resp.status().is_success())
+        }
         "deepgram" => {
             let client = reqwest::Client::new();
             let resp = client
@@ -224,8 +253,67 @@ async fn test_stt_connection(
                 .map_err(|e| e.to_string())?;
             Ok(resp.status().is_success())
         }
+        "volcengine-flash" => {
+            let wav = stt::whisper_compat::WhisperCompatProvider::build_wav(&vec![0u8; 3200], 16000);
+            let body = serde_json::json!({
+                "user": { "uid": "voiceslate-local" },
+                "audio": { "data": STANDARD.encode(wav) },
+                "request": {
+                    "model_name": "bigmodel",
+                    "enable_itn": true,
+                    "enable_punc": true,
+                    "enable_ddc": true
+                }
+            });
+            let client = reqwest::Client::new();
+            let resp = client
+                .post("https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash")
+                .header("Content-Type", "application/json")
+                .header("X-Api-Key", api_key)
+                .header("X-Api-Resource-Id", "volc.bigasr.auc_turbo")
+                .header("X-Api-Request-Id", uuid::Uuid::new_v4().to_string())
+                .header("X-Api-Sequence", "-1")
+                .json(&body)
+                .timeout(std::time::Duration::from_secs(15))
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(resp.status().is_success())
+        }
+        "volcengine-standard" => {
+            let wav = stt::whisper_compat::WhisperCompatProvider::build_wav(&vec![0u8; 3200], 16000);
+            let body = serde_json::json!({
+                "user": { "uid": "voiceslate-local" },
+                "audio": { "data": STANDARD.encode(wav), "format": "wav" },
+                "request": {
+                    "model_name": "bigmodel",
+                    "enable_itn": true,
+                    "enable_punc": true,
+                    "enable_ddc": true,
+                    "enable_speaker_info": false,
+                    "enable_channel_split": false,
+                    "show_utterances": false,
+                    "vad_segment": false,
+                    "sensitive_words_filter": ""
+                }
+            });
+            let client = reqwest::Client::new();
+            let resp = client
+                .post("https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit")
+                .header("Content-Type", "application/json")
+                .header("X-Api-Key", api_key)
+                .header("X-Api-Resource-Id", "volc.seedasr.auc")
+                .header("X-Api-Request-Id", uuid::Uuid::new_v4().to_string())
+                .header("X-Api-Sequence", "-1")
+                .json(&body)
+                .timeout(std::time::Duration::from_secs(15))
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(resp.status().is_success())
+        }
         "glm-asr" | "openai-whisper" | "groq-whisper" | "siliconflow" => {
-            // All four use Whisper-compatible file upload API
+            // These providers use a Whisper-compatible file upload API.
             let (endpoint, model, extra_fields): (&str, &str, &[(&str, &str)]) =
                 match provider.as_str() {
                     "glm-asr" => (
@@ -439,11 +527,26 @@ async fn bench_stt_connection(
         return Ok(elapsed);
     }
 
-    if api_key.is_empty() {
+    if api_key.is_empty() && provider != "local-whisper" {
         return Err("API key is empty".to_string());
     }
 
     match provider.as_str() {
+        "local-whisper" => {
+            let client = reqwest::Client::new();
+            let t0 = std::time::Instant::now();
+            let resp = client
+                .get("http://127.0.0.1:8178/health")
+                .timeout(std::time::Duration::from_secs(5))
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            let elapsed = t0.elapsed().as_millis() as u32;
+            if !resp.status().is_success() {
+                return Err(format!("HTTP {}", resp.status()));
+            }
+            Ok(elapsed)
+        }
         "deepgram" => {
             let client = reqwest::Client::new();
             let t0 = std::time::Instant::now();
@@ -467,6 +570,75 @@ async fn bench_stt_connection(
                 .get("https://api.assemblyai.com/v2/transcript?limit=1")
                 .header("Authorization", api_key)
                 .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            let elapsed = t0.elapsed().as_millis() as u32;
+            if !resp.status().is_success() {
+                return Err(format!("HTTP {}", resp.status()));
+            }
+            Ok(elapsed)
+        }
+        "volcengine-flash" => {
+            let wav = stt::whisper_compat::WhisperCompatProvider::build_wav(&vec![0u8; 3200], 16000);
+            let body = serde_json::json!({
+                "user": { "uid": "voiceslate-local" },
+                "audio": { "data": STANDARD.encode(wav) },
+                "request": {
+                    "model_name": "bigmodel",
+                    "enable_itn": true,
+                    "enable_punc": true,
+                    "enable_ddc": true
+                }
+            });
+            let client = reqwest::Client::new();
+            let t0 = std::time::Instant::now();
+            let resp = client
+                .post("https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash")
+                .header("Content-Type", "application/json")
+                .header("X-Api-Key", api_key)
+                .header("X-Api-Resource-Id", "volc.bigasr.auc_turbo")
+                .header("X-Api-Request-Id", uuid::Uuid::new_v4().to_string())
+                .header("X-Api-Sequence", "-1")
+                .json(&body)
+                .timeout(std::time::Duration::from_secs(15))
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            let elapsed = t0.elapsed().as_millis() as u32;
+            if !resp.status().is_success() {
+                return Err(format!("HTTP {}", resp.status()));
+            }
+            Ok(elapsed)
+        }
+        "volcengine-standard" => {
+            let wav = stt::whisper_compat::WhisperCompatProvider::build_wav(&vec![0u8; 3200], 16000);
+            let body = serde_json::json!({
+                "user": { "uid": "voiceslate-local" },
+                "audio": { "data": STANDARD.encode(wav), "format": "wav" },
+                "request": {
+                    "model_name": "bigmodel",
+                    "enable_itn": true,
+                    "enable_punc": true,
+                    "enable_ddc": true,
+                    "enable_speaker_info": false,
+                    "enable_channel_split": false,
+                    "show_utterances": false,
+                    "vad_segment": false,
+                    "sensitive_words_filter": ""
+                }
+            });
+            let client = reqwest::Client::new();
+            let t0 = std::time::Instant::now();
+            let resp = client
+                .post("https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit")
+                .header("Content-Type", "application/json")
+                .header("X-Api-Key", api_key)
+                .header("X-Api-Resource-Id", "volc.seedasr.auc")
+                .header("X-Api-Request-Id", uuid::Uuid::new_v4().to_string())
+                .header("X-Api-Sequence", "-1")
+                .json(&body)
+                .timeout(std::time::Duration::from_secs(15))
                 .send()
                 .await
                 .map_err(|e| e.to_string())?;
@@ -625,6 +797,25 @@ async fn get_history(
 }
 
 #[tauri::command]
+async fn update_history_correction(
+    state: tauri::State<'_, storage::HistoryStore>,
+    id: i64,
+    corrected_text: Option<String>,
+) -> Result<(), String> {
+    state
+        .update_correction(id, corrected_text.as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_history_stats(
+    state: tauri::State<'_, storage::HistoryStore>,
+) -> Result<storage::HistoryStats, String> {
+    state.stats().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn clear_history(state: tauri::State<'_, storage::HistoryStore>) -> Result<(), String> {
     state.clear().await.map_err(|e| e.to_string())
 }
@@ -703,6 +894,8 @@ async fn set_auto_start(
 async fn update_hotkey(
     app: tauri::AppHandle,
     config_state: tauri::State<'_, storage::ConfigManager>,
+    hotkey_cache: tauri::State<'_, HotkeyBindingCache>,
+    hotkey_paused: tauri::State<'_, HotkeyPausedCache>,
     hotkey: String,
 ) -> Result<(), String> {
     let new_shortcut =
@@ -713,13 +906,23 @@ async fn update_hotkey(
     app.global_shortcut()
         .unregister_all()
         .map_err(|e| e.to_string())?;
-    app.global_shortcut()
-        .register(new_shortcut)
-        .map_err(|e| e.to_string())?;
+    if let Err(e) = app.global_shortcut().register(new_shortcut) {
+        if should_use_custom_alt_watcher(&hotkey) {
+            tracing::warn!(
+                "Failed to register AltRight global shortcut, falling back to custom watcher: {}",
+                e
+            );
+        } else {
+            return Err(e.to_string());
+        }
+    }
+    register_windows_backup_shortcuts(&app, &hotkey);
 
     // Save updated hotkey to config
     let mut config = config_state.load().await.map_err(|e| e.to_string())?;
     config.hotkey = hotkey;
+    *hotkey_cache.0.lock().unwrap_or_else(|e| e.into_inner()) = config.hotkey.clone();
+    hotkey_paused.0.store(false, Ordering::SeqCst);
     config_state
         .save(&config)
         .await
@@ -731,6 +934,9 @@ async fn update_hotkey(
 /// Temporarily unregister all global shortcuts so the webview can capture key events.
 #[tauri::command]
 fn pause_hotkey(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(paused) = app.try_state::<HotkeyPausedCache>() {
+        paused.0.store(true, Ordering::SeqCst);
+    }
     app.global_shortcut()
         .unregister_all()
         .map_err(|e| e.to_string())
@@ -746,9 +952,24 @@ async fn resume_hotkey(
     let shortcut = parse_hotkey(&config.hotkey).unwrap_or_else(default_shortcut);
     // Ensure clean state, then register
     let _ = app.global_shortcut().unregister_all();
-    app.global_shortcut()
-        .register(shortcut)
-        .map_err(|e| e.to_string())
+    if let Some(paused) = app.try_state::<HotkeyPausedCache>() {
+        paused.0.store(false, Ordering::SeqCst);
+    }
+    if let Err(e) = app.global_shortcut().register(shortcut) {
+        if should_use_custom_alt_watcher(&config.hotkey) {
+            tracing::warn!(
+                "Failed to resume AltRight global shortcut, custom watcher remains active: {}",
+                e
+            );
+            register_windows_backup_shortcuts(&app, &config.hotkey);
+            Ok(())
+        } else {
+            Err(e.to_string())
+        }
+    } else {
+        register_windows_backup_shortcuts(&app, &config.hotkey);
+        Ok(())
+    }
 }
 
 // ─── Hotkey parsing ───
@@ -762,10 +983,89 @@ fn default_shortcut() -> Shortcut {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            Shortcut::new(Some(Modifiers::CONTROL), Code::Slash)
+            Shortcut::new(None, Code::AltRight)
         }
     };
     parse_hotkey(&default_hotkey).unwrap_or(fallback)
+}
+
+fn should_use_custom_alt_watcher(hotkey: &str) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        hotkey.eq_ignore_ascii_case("AltRight")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = hotkey;
+        false
+    }
+}
+
+fn should_ignore_duplicate_press(app_handle: &tauri::AppHandle) -> bool {
+    if let Some(guard) = app_handle.try_state::<HotkeyPressGuard>() {
+        let mut last_press = guard.0.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Instant::now();
+        if let Some(previous) = *last_press {
+            if now.duration_since(previous) < Duration::from_millis(250) {
+                return true;
+            }
+        }
+        *last_press = Some(now);
+    }
+    false
+}
+
+fn dispatch_hotkey_state(app_handle: tauri::AppHandle, event_state: ShortcutState) {
+    match event_state {
+        ShortcutState::Pressed => {
+            if should_ignore_duplicate_press(&app_handle) {
+                return;
+            }
+            let handle = app_handle.clone();
+            let hotkey_mode = handle
+                .state::<HotkeyModeCache>()
+                .0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            tauri::async_runtime::spawn(async move {
+                let pipeline = handle.state::<pipeline::PipelineHandle>();
+
+                if hotkey_mode == "toggle" {
+                    if pipeline.current_state() == pipeline::PipelineState::Idle {
+                        if let Err(e) = pipeline.start().await {
+                            tracing::error!("Failed to start recording: {}", e);
+                            let _ = handle.emit("pipeline:error", e.to_string());
+                        }
+                    } else if let Err(e) = pipeline.stop().await {
+                        tracing::error!("Failed to stop recording: {}", e);
+                        let _ = handle.emit("pipeline:error", e.to_string());
+                    }
+                } else if let Err(e) = pipeline.start().await {
+                    tracing::error!("Failed to start recording: {}", e);
+                    let _ = handle.emit("pipeline:error", e.to_string());
+                }
+            });
+        }
+        ShortcutState::Released => {
+            let handle = app_handle.clone();
+            let hotkey_mode = handle
+                .state::<HotkeyModeCache>()
+                .0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            if hotkey_mode != "toggle" {
+                tauri::async_runtime::spawn(async move {
+                    let pipeline = handle.state::<pipeline::PipelineHandle>();
+                    if let Err(e) = pipeline.stop().await {
+                        tracing::error!("Failed to stop recording: {}", e);
+                        let _ = handle.emit("pipeline:error", e.to_string());
+                    }
+                });
+            }
+        }
+    }
 }
 
 fn build_shortcut_handler(
@@ -775,53 +1075,115 @@ fn build_shortcut_handler(
        + Sync
        + 'static {
     move |_app, _shortcut, event| {
-        let handle = app_handle.clone();
-        match event.state {
-            ShortcutState::Pressed => {
-                let hotkey_mode = handle
-                    .state::<HotkeyModeCache>()
-                    .0
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .clone();
-                tauri::async_runtime::spawn(async move {
-                    let pipeline = handle.state::<pipeline::PipelineHandle>();
+        dispatch_hotkey_state(app_handle.clone(), event.state);
+    }
+}
 
-                    if hotkey_mode == "toggle" {
-                        if pipeline.current_state() == pipeline::PipelineState::Idle {
-                            if let Err(e) = pipeline.start().await {
-                                tracing::error!("Failed to start recording: {}", e);
-                                let _ = handle.emit("pipeline:error", e.to_string());
-                            }
-                        } else if let Err(e) = pipeline.stop().await {
-                            tracing::error!("Failed to stop recording: {}", e);
-                            let _ = handle.emit("pipeline:error", e.to_string());
-                        }
-                    } else if let Err(e) = pipeline.start().await {
-                        tracing::error!("Failed to start recording: {}", e);
-                        let _ = handle.emit("pipeline:error", e.to_string());
+#[cfg(target_os = "windows")]
+fn register_windows_backup_shortcuts(app: &tauri::AppHandle, hotkey: &str) {
+    if hotkey.eq_ignore_ascii_case("AltRight") {
+        let backup = Shortcut::new(None, Code::F8);
+        if let Err(e) = app.global_shortcut().register(backup) {
+            tracing::warn!("Failed to register Windows backup shortcut F8: {}", e);
+        } else {
+            tracing::info!("Registered Windows backup shortcut F8");
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn register_windows_backup_shortcuts(_app: &tauri::AppHandle, _hotkey: &str) {}
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn windows_alt_hook_proc(
+    code: i32,
+    w_param: usize,
+    l_param: isize,
+) -> isize {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_RMENU;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CallNextHookEx, KBDLLHOOKSTRUCT, HC_ACTION, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN,
+        WM_SYSKEYUP,
+    };
+
+    if code == HC_ACTION as i32 && !l_param.is_negative() {
+        let kb = &*(l_param as *const KBDLLHOOKSTRUCT);
+        if kb.vkCode == VK_RMENU as u32 {
+            let maybe_handle = WINDOWS_ALT_HOOK_APP
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            if let Some(app_handle) = maybe_handle {
+                let paused = app_handle
+                    .try_state::<HotkeyPausedCache>()
+                    .map(|state| state.0.load(Ordering::SeqCst))
+                    .unwrap_or(false);
+                let binding = app_handle
+                    .try_state::<HotkeyBindingCache>()
+                    .map(|state| state.0.lock().unwrap_or_else(|e| e.into_inner()).clone())
+                    .unwrap_or_default();
+                if paused || !binding.eq_ignore_ascii_case("AltRight") {
+                    return CallNextHookEx(std::ptr::null_mut(), code, w_param, l_param);
+                }
+                match w_param as u32 {
+                    WM_KEYDOWN | WM_SYSKEYDOWN => {
+                        dispatch_hotkey_state(app_handle, ShortcutState::Pressed);
+                        return 1;
                     }
-                });
-            }
-            ShortcutState::Released => {
-                let hotkey_mode = handle
-                    .state::<HotkeyModeCache>()
-                    .0
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .clone();
-                if hotkey_mode != "toggle" {
-                    tauri::async_runtime::spawn(async move {
-                        let pipeline = handle.state::<pipeline::PipelineHandle>();
-                        if let Err(e) = pipeline.stop().await {
-                            tracing::error!("Failed to stop recording: {}", e);
-                            let _ = handle.emit("pipeline:error", e.to_string());
-                        }
-                    });
+                    WM_KEYUP | WM_SYSKEYUP => {
+                        dispatch_hotkey_state(app_handle, ShortcutState::Released);
+                        return 1;
+                    }
+                    _ => {}
                 }
             }
         }
     }
+
+    CallNextHookEx(std::ptr::null_mut(), code, w_param, l_param)
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_windows_alt_hook(app_handle: tauri::AppHandle) {
+    *WINDOWS_ALT_HOOK_APP
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = Some(app_handle);
+
+    std::thread::spawn(move || {
+        use windows_sys::Win32::Foundation::{LPARAM, WPARAM};
+        use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
+            HHOOK, MSG, WH_KEYBOARD_LL,
+        };
+
+        unsafe {
+            let module = GetModuleHandleW(std::ptr::null());
+            let hook: HHOOK =
+                SetWindowsHookExW(WH_KEYBOARD_LL, Some(windows_alt_hook_proc), module, 0);
+
+            if hook.is_null() {
+                tracing::error!("Failed to install Windows low-level AltRight hook");
+                return;
+            }
+
+            let mut msg = MSG {
+                hwnd: std::ptr::null_mut(),
+                message: 0,
+                wParam: WPARAM::default(),
+                lParam: LPARAM::default(),
+                time: 0,
+                pt: windows_sys::Win32::Foundation::POINT { x: 0, y: 0 },
+            };
+
+            while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+
+            let _ = UnhookWindowsHookEx(hook);
+        }
+    });
 }
 
 fn parse_hotkey(s: &str) -> Option<Shortcut> {
@@ -871,6 +1233,14 @@ fn parse_hotkey(s: &str) -> Option<Shortcut> {
         "f10" => Code::F10,
         "f11" => Code::F11,
         "f12" => Code::F12,
+        "altright" | "rightalt" | "ralt" => Code::AltRight,
+        "altleft" | "leftalt" | "lalt" => Code::AltLeft,
+        "controlright" | "ctrlright" | "rightctrl" | "rightcontrol" => Code::ControlRight,
+        "controlleft" | "ctrlleft" | "leftctrl" | "leftcontrol" => Code::ControlLeft,
+        "shiftright" | "rightshift" => Code::ShiftRight,
+        "shiftleft" | "leftshift" => Code::ShiftLeft,
+        "metaright" | "winright" | "rightwin" => Code::MetaRight,
+        "metaleft" | "winleft" | "leftwin" => Code::MetaLeft,
         "a" => Code::KeyA,
         "b" => Code::KeyB,
         "c" => Code::KeyC,
@@ -1029,7 +1399,7 @@ pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::from_default_env().add_directive(
-                "opentypeless=debug"
+                "voiceslate=debug"
                     .parse()
                     .expect("static directive is valid"),
             ),
@@ -1072,7 +1442,7 @@ pub fn run() {
             // Initialize data directory and database
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
-            let db_path = data_dir.join("opentypeless.db");
+            let db_path = data_dir.join("voiceslate.db");
 
             // Initialize stores
             let config_manager = storage::ConfigManager::new(app_handle.clone());
@@ -1094,6 +1464,11 @@ pub fn run() {
             app.manage(HotkeyModeCache(Arc::new(Mutex::new(
                 initial_config.hotkey_mode.clone(),
             ))));
+            app.manage(HotkeyBindingCache(Arc::new(Mutex::new(
+                initial_config.hotkey.clone(),
+            ))));
+            app.manage(HotkeyPausedCache(Arc::new(AtomicBool::new(false))));
+            app.manage(HotkeyPressGuard(Arc::new(Mutex::new(None))));
             app.manage(CloseToTrayCache(Arc::new(Mutex::new(
                 initial_config.close_to_tray,
             ))));
@@ -1120,9 +1495,17 @@ pub fn run() {
             )?;
             if let Err(e) = app.global_shortcut().register(shortcut) {
                 tracing::warn!(
-                    "Failed to register shortcut '{}' (may be occupied): {e}",
+                    "Failed to register shortcut '{}' (fallbacks may still work): {e}",
                     initial_config.hotkey
                 );
+            }
+            register_windows_backup_shortcuts(&app_handle, &initial_config.hotkey);
+
+            #[cfg(target_os = "windows")]
+            spawn_windows_alt_hook(app_handle.clone());
+
+            if let Some(capsule) = app.get_webview_window("capsule") {
+                let _ = capsule.show();
             }
 
             // System tray
@@ -1136,7 +1519,7 @@ pub fn run() {
                         .clone(),
                 )
                 .menu(&tray_menu)
-                .tooltip("OpenTypeless")
+                .tooltip("VoiceSlate")
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "quit" => {
                         app.exit(0);
@@ -1299,7 +1682,17 @@ pub fn run() {
                 }
             }
 
-            tracing::info!("OpenTypeless started");
+            tracing::info!("VoiceSlate started");
+
+            #[cfg(target_os = "windows")]
+            {
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        crate::app_detector::refresh_last_external_app();
+                        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    }
+                });
+            }
 
             // P1-2: Pre-warm HTTP connection pool in background
             let warm_handle = app_handle.clone();
@@ -1324,6 +1717,8 @@ pub fn run() {
             bench_llm_connection,
             fetch_llm_models,
             get_history,
+            update_history_correction,
+            get_history_stats,
             clear_history,
             get_dictionary,
             add_dictionary_entry,

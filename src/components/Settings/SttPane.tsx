@@ -17,6 +17,7 @@ export function SttPane() {
   const { t } = useTranslation()
 
   const isCloud = config.stt_provider === 'cloud'
+  const isLocal = config.stt_provider === 'local-whisper'
 
   const handleTest = async () => {
     setSttTestStatus('testing')
@@ -64,6 +65,32 @@ export function SttPane() {
             <p className="text-[12px] text-text-secondary">{t('settings.sttUpgradeHint')}</p>
           ) : (
             <p className="text-[12px] text-green-500">{t('settings.sttProActive')}</p>
+          )}
+        </div>
+      ) : isLocal ? (
+        <div className="border border-border rounded-[10px] px-3 py-3 space-y-2">
+          <div className="text-[13px] font-medium text-text-primary">Local Whisper</div>
+          <p className="text-[12px] text-text-secondary">
+            本地语音识别服务已经内置，不需要再填写 STT API Key。中文输出会统一为简体中文。
+          </p>
+          <button
+            onClick={handleTest}
+            disabled={sttTestStatus === 'testing'}
+            className="px-4 py-2.5 bg-accent text-white rounded-[10px] text-[13px] border-none cursor-pointer hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-1.5"
+          >
+            {sttTestStatus === 'testing' && <Loader2 size={14} className="animate-spin" />}
+            {t('settings.test')}
+          </button>
+          {sttTestStatus === 'success' && (
+            <p className="flex items-center gap-1 text-[12px] text-success">
+              <CheckCircle2 size={13} />{' '}
+              {sttLatencyMs !== null ? `${sttLatencyMs}ms` : t('settings.connectionSuccess')}
+            </p>
+          )}
+          {sttTestStatus === 'error' && (
+            <p className="flex items-center gap-1 text-[12px] text-error">
+              <XCircle size={13} /> {t('settings.connectionFailed')}
+            </p>
           )}
         </div>
       ) : (

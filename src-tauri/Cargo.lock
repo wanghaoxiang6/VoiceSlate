@@ -3287,40 +3287,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "opentypeless"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arboard",
- "async-trait",
- "chrono",
- "cpal",
- "enigo",
- "futures-util",
- "http",
- "reqwest 0.12.28",
- "rusqlite",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-clipboard-manager",
- "tauri-plugin-deep-link",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-opener",
- "tauri-plugin-single-instance",
- "tauri-plugin-sql",
- "tauri-plugin-store",
- "tokio",
- "tokio-tungstenite",
- "tracing",
- "tracing-subscriber",
- "url",
- "windows-sys 0.59.0",
-]
-
-[[package]]
 name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6151,6 +6117,42 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "voiceslate"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "cpal",
+ "enigo",
+ "futures-util",
+ "http",
+ "reqwest 0.12.28",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-clipboard-manager",
+ "tauri-plugin-deep-link",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-opener",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-sql",
+ "tauri-plugin-store",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+ "windows-sys 0.59.0",
+]
 
 [[package]]
 name = "vswhom"

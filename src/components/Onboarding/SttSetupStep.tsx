@@ -8,6 +8,7 @@ export function SttSetupStep() {
   const updateConfig = useAppStore((s) => s.updateConfig)
   const sttTestStatus = useAppStore((s) => s.sttTestStatus)
   const setSttTestStatus = useAppStore((s) => s.setSttTestStatus)
+  const isLocal = config.stt_provider === 'local-whisper'
 
   const handleTest = async () => {
     setSttTestStatus('testing')
@@ -38,29 +39,48 @@ export function SttSetupStep() {
         </select>
       </Field>
 
-      <Field label="API Key">
-        <div className="flex gap-2">
-          <input
-            type="password"
-            value={config.stt_api_key}
-            onChange={(e) => {
-              updateConfig({ stt_api_key: e.target.value })
-              setSttTestStatus('idle')
-            }}
-            placeholder="Enter API Key..."
-            className="flex-1 px-3 py-2.5 bg-bg-secondary border border-border rounded-[10px] text-[13px] text-text-primary outline-none focus:border-border-focus transition-colors"
-          />
-          <button
-            onClick={handleTest}
-            disabled={!config.stt_api_key || sttTestStatus === 'testing'}
-            className="px-4 py-2.5 bg-accent text-white rounded-[10px] text-[13px] border-none cursor-pointer hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
-          >
-            {sttTestStatus === 'testing' && <Loader2 size={14} className="animate-spin" />}
-            Test
-          </button>
-        </div>
-        <TestStatusHint status={sttTestStatus} />
-      </Field>
+      {isLocal ? (
+        <Field label="Local STT">
+          <div className="space-y-3 rounded-[10px] border border-border bg-bg-secondary px-3 py-3">
+            <p className="text-[12px] text-text-secondary">
+              Built-in Local Whisper is ready. No STT API key is required.
+            </p>
+            <button
+              onClick={handleTest}
+              disabled={sttTestStatus === 'testing'}
+              className="px-4 py-2.5 bg-accent text-white rounded-[10px] text-[13px] border-none cursor-pointer hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-1.5"
+            >
+              {sttTestStatus === 'testing' && <Loader2 size={14} className="animate-spin" />}
+              Test
+            </button>
+            <TestStatusHint status={sttTestStatus} />
+          </div>
+        </Field>
+      ) : (
+        <Field label="API Key">
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={config.stt_api_key}
+              onChange={(e) => {
+                updateConfig({ stt_api_key: e.target.value })
+                setSttTestStatus('idle')
+              }}
+              placeholder="Enter API Key..."
+              className="flex-1 px-3 py-2.5 bg-bg-secondary border border-border rounded-[10px] text-[13px] text-text-primary outline-none focus:border-border-focus transition-colors"
+            />
+            <button
+              onClick={handleTest}
+              disabled={!config.stt_api_key || sttTestStatus === 'testing'}
+              className="px-4 py-2.5 bg-accent text-white rounded-[10px] text-[13px] border-none cursor-pointer hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
+            >
+              {sttTestStatus === 'testing' && <Loader2 size={14} className="animate-spin" />}
+              Test
+            </button>
+          </div>
+          <TestStatusHint status={sttTestStatus} />
+        </Field>
+      )}
     </div>
   )
 }

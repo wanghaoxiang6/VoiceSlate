@@ -188,11 +188,11 @@ impl PipelineHandle {
         // Update tray tooltip + menu to reflect pipeline state
         if let Some(tray_handle) = self.app_handle.try_state::<crate::TrayHandle>() {
             let tooltip = match new_state {
-                PipelineState::Recording => "OpenTypeless - Recording...",
-                PipelineState::Transcribing => "OpenTypeless - Transcribing...",
-                PipelineState::Polishing => "OpenTypeless - Polishing...",
-                PipelineState::Outputting => "OpenTypeless - Outputting...",
-                PipelineState::Idle => "OpenTypeless",
+                PipelineState::Recording => "VoiceSlate - Recording...",
+                PipelineState::Transcribing => "VoiceSlate - Transcribing...",
+                PipelineState::Polishing => "VoiceSlate - Polishing...",
+                PipelineState::Outputting => "VoiceSlate - Outputting...",
+                PipelineState::Idle => "VoiceSlate",
             };
             if let Ok(t) = tray_handle.tray.lock() {
                 let _ = t.set_tooltip(Some(tooltip));
@@ -321,7 +321,7 @@ impl PipelineHandle {
         // Update tray for recording state
         if let Some(tray_handle) = self.app_handle.try_state::<crate::TrayHandle>() {
             if let Ok(t) = tray_handle.tray.lock() {
-                let _ = t.set_tooltip(Some("OpenTypeless - Recording..."));
+                let _ = t.set_tooltip(Some("VoiceSlate - Recording..."));
             }
         }
         crate::refresh_tray(&self.app_handle);
@@ -597,7 +597,7 @@ impl PipelineHandle {
         // Update tray for transcribing state
         if let Some(tray_handle) = self.app_handle.try_state::<crate::TrayHandle>() {
             if let Ok(t) = tray_handle.tray.lock() {
-                let _ = t.set_tooltip(Some("OpenTypeless - Transcribing..."));
+                let _ = t.set_tooltip(Some("VoiceSlate - Transcribing..."));
             }
         }
         crate::refresh_tray(&self.app_handle);
@@ -785,9 +785,7 @@ impl PipelineHandle {
                     final_text = response.polished_text;
                     llm_elapsed = llm_start.elapsed();
 
-                    if let Err(e) = self
-                        .output_text(&final_text, &app_ctx.app_name, &config)
-                        .await
+                    if let Err(e) = self.output_text(&final_text, &app_ctx, &config).await
                     {
                         tracing::error!("Output failed: {}", e);
                         let _ = self
@@ -808,9 +806,7 @@ impl PipelineHandle {
                     let _ = self
                         .app_handle
                         .emit("pipeline:error", format!("LLM polishing failed: {e}"));
-                    if let Err(e) = self
-                        .output_text(&final_text, &app_ctx.app_name, &config)
-                        .await
+                    if let Err(e) = self.output_text(&final_text, &app_ctx, &config).await
                     {
                         tracing::error!("Output failed: {}", e);
                         let _ = self
@@ -827,9 +823,7 @@ impl PipelineHandle {
         } else {
             llm_elapsed = std::time::Duration::ZERO;
             final_text = raw_text.clone();
-            if let Err(e) = self
-                .output_text(&final_text, &app_ctx.app_name, &config)
-                .await
+            if let Err(e) = self.output_text(&final_text, &app_ctx, &config).await
             {
                 tracing::error!("Output failed: {}", e);
                 let _ = self
@@ -876,8 +870,12 @@ impl PipelineHandle {
             app_type: format!("{:?}", app_ctx.app_type),
             raw_text,
             polished_text: final_text,
+            corrected_text: None,
+            corrected_at: None,
             language: None,
             duration_ms,
+            stt_provider: Some(config.stt_provider.clone()),
+            llm_provider: Some(config.llm_provider.clone()),
         };
         if let Err(e) = self
             .app_handle
@@ -895,7 +893,7 @@ impl PipelineHandle {
     async fn output_text(
         &self,
         text: &str,
-        app_name: &str,
+        app_ctx: &app_detector::AppContext,
         config: &storage::AppConfig,
     ) -> Result<()> {
         self.set_state(PipelineState::Outputting);
@@ -912,10 +910,24 @@ impl PipelineHandle {
             anyhow::bail!("ACCESSIBILITY_REQUIRED");
         }
 
+        #[cfg(target_os = "windows")]
+        if app_ctx.window_handle != 0 {
+            let focused = app_detector::focus_app_window(app_ctx);
+            tracing::info!(
+                "Restoring target window before output: app='{}', hwnd={}, focused={}",
+                app_ctx.app_name,
+                app_ctx.window_handle,
+                focused
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(220)).await;
+        }
+
         let output = output::create_output(mode);
         output.type_text(text).await?;
 
-        let _ = self.app_handle.emit("pipeline:target_app", app_name);
+        let _ = self
+            .app_handle
+            .emit("pipeline:target_app", app_ctx.app_name.clone());
 
         Ok(())
     }
@@ -930,6 +942,13 @@ impl PipelineHandle {
             "cloud" => {
                 let base = crate::api_base_url();
                 format!("{}/api/proxy/stt", base)
+            }
+            "volcengine-flash" => {
+                "https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash"
+                    .to_string()
+            }
+            "volcengine-standard" => {
+                "https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit".to_string()
             }
             "glm-asr" => "https://open.bigmodel.cn/api/paas/v4/audio/transcriptions".to_string(),
             "openai-whisper" => "https://api.openai.com/v1/audio/transcriptions".to_string(),

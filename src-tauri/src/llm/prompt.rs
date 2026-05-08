@@ -211,9 +211,9 @@ mod tests {
 
     #[test]
     fn test_build_prompt_with_dictionary() {
-        let dict = vec!["OpenTypeless".to_string(), "Tauri".to_string()];
+        let dict = vec!["VoiceSlate".to_string(), "Tauri".to_string()];
         let prompt = build_system_prompt(AppType::General, &dict, false, "", false);
-        assert!(prompt.contains("\"OpenTypeless\""));
+        assert!(prompt.contains("\"VoiceSlate\""));
         assert!(prompt.contains("\"Tauri\""));
     }
 

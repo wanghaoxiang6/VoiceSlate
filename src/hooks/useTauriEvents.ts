@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { useAppStore } from '../stores/appStore'
 import type { PipelineState } from '../stores/appStore'
-import { getHistory } from '../lib/tauri'
+import { getHistory, getHistoryStats } from '../lib/tauri'
 
 export function useTauriEvents() {
   const {
@@ -15,6 +15,7 @@ export function useTauriEvents() {
     setPipelineError,
     setAccessibilityTrusted,
     setHistory,
+    setHistoryStats,
   } = useAppStore()
 
   useEffect(() => {
@@ -42,17 +43,16 @@ export function useTauriEvents() {
     addListener<PipelineState>('pipeline:state', (state) => {
       setPipelineState(state)
       if (state === 'recording') {
-        // Clear any previous error when starting a new pipeline run
         setPipelineError(null)
       }
       if (state === 'idle') {
-        // Don't clear pipelineError here — CapsuleError auto-resets after 2.5s.
-        // Clearing here would swallow errors from failed start() calls that
-        // transition Recording → Idle in rapid succession.
-        getHistory(200, 0)
-          .then(setHistory)
+        Promise.all([getHistory(200, 0), getHistoryStats()])
+          .then(([history, stats]) => {
+            setHistory(history)
+            setHistoryStats(stats)
+          })
           .catch((err) => {
-            console.error('Failed to refresh history:', err)
+            console.error('Failed to refresh history or stats:', err)
           })
       }
     })
@@ -91,5 +91,6 @@ export function useTauriEvents() {
     setPipelineError,
     setAccessibilityTrusted,
     setHistory,
+    setHistoryStats,
   ])
 }

@@ -1,14 +1,26 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Check, Keyboard, MousePointerClick, GripHorizontal, MousePointer, ShieldAlert, ShieldCheck } from 'lucide-react'
+import {
+  Check,
+  Keyboard,
+  MousePointerClick,
+  GripHorizontal,
+  MousePointer,
+  ShieldAlert,
+  ShieldCheck,
+} from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
 import { checkAccessibilityPermission, requestAccessibilityPermission } from '../../lib/tauri'
+import { formatHotkeyLabel } from '../../lib/hotkey'
 
 export function DoneStep() {
   const config = useAppStore((s) => s.config)
-  const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0
+  const isMac =
+    typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0
   const [a11yTrusted, setA11yTrusted] = useState<boolean | null>(null)
   const showPermissionCard = isMac && config.output_mode === 'keyboard'
+  const displayHotkey = formatHotkeyLabel(config.hotkey)
+  const isZh = config.ui_language === 'zh'
 
   useEffect(() => {
     if (showPermissionCard) {
@@ -27,7 +39,6 @@ export function DoneStep() {
 
   return (
     <div className="flex flex-col items-center gap-5 py-2">
-      {/* Success animation */}
       <motion.div
         className="w-16 h-16 rounded-full bg-success/10 flex items-center justify-center"
         initial={{ scale: 0 }}
@@ -44,39 +55,65 @@ export function DoneStep() {
       </motion.div>
 
       <div className="text-center">
-        <h2 className="text-[17px] font-semibold text-text-primary">All Set</h2>
-        <p className="text-[13px] text-text-secondary mt-1">The capsule is now on your desktop</p>
+        <h2 className="text-[17px] font-semibold text-text-primary">
+          {isZh ? '已经准备好了' : 'All Set'}
+        </h2>
+        <p className="text-[13px] text-text-secondary mt-1">
+          {isZh ? '现在可以开始用语音输入了' : 'The capsule is now on your desktop'}
+        </p>
       </div>
 
-      {/* Usage tips */}
       <div className="w-full space-y-2">
         <Tip
           icon={Keyboard}
-          title={`${config.hotkey_mode === 'hold' ? 'Hold' : 'Press'} ${config.hotkey}`}
-          desc={config.hotkey_mode === 'hold' ? 'to talk anywhere' : 'to start/stop recording'}
+          title={
+            config.hotkey_mode === 'hold'
+              ? `${isZh ? '按住' : 'Hold'} ${displayHotkey}`
+              : `${isZh ? '按一下' : 'Press'} ${displayHotkey}`
+          }
+          desc={
+            config.hotkey_mode === 'hold'
+              ? isZh
+                ? '开始说话，松开后转文字'
+                : 'to talk anywhere'
+              : isZh
+                ? '开始录音，再按一次结束'
+                : 'to start/stop recording'
+          }
         />
-        <Tip icon={MousePointerClick} title="Click the capsule" desc="to start recording" />
-        <Tip icon={GripHorizontal} title="Drag to reposition" desc="place it anywhere on screen" />
-        <Tip icon={MousePointer} title="Right-click for menu" desc="settings, history, and more" />
+        <Tip
+          icon={MousePointerClick}
+          title={isZh ? '点击胶囊' : 'Click the capsule'}
+          desc={isZh ? '也可以开始录音' : 'to start recording'}
+        />
+        <Tip
+          icon={GripHorizontal}
+          title={isZh ? '拖动调整位置' : 'Drag to reposition'}
+          desc={isZh ? '可以放在屏幕任意位置' : 'place it anywhere on screen'}
+        />
+        <Tip
+          icon={MousePointer}
+          title={isZh ? '右键打开菜单' : 'Right-click for menu'}
+          desc={isZh ? '设置、历史记录等都在这里' : 'settings, history, and more'}
+        />
       </div>
 
-      {/* macOS Accessibility permission card */}
       {showPermissionCard && a11yTrusted === false && (
         <div className="w-full px-3 py-2.5 bg-amber-500/10 border border-amber-500/20 rounded-[10px]">
           <div className="flex items-center gap-2 mb-2">
             <ShieldAlert size={14} className="text-amber-500 shrink-0" />
             <span className="text-[12px] font-medium text-text-primary">
-              Keyboard output requires Accessibility permission
+              {isZh ? '键盘输出需要辅助功能权限' : 'Keyboard output requires Accessibility permission'}
             </span>
           </div>
           <button
             onClick={handleGrant}
             className="w-full py-1.5 text-[12px] font-medium text-white bg-accent rounded-[8px] border-none cursor-pointer hover:bg-accent-hover transition-colors"
           >
-            Grant Permission
+            {isZh ? '去授权' : 'Grant Permission'}
           </button>
           <p className="text-[10px] text-text-tertiary mt-1.5 text-center">
-            You can also grant this later in Settings → General
+            {isZh ? '后面也可以在设置里再开启' : 'You can also grant this later in Settings'}
           </p>
         </div>
       )}
@@ -85,7 +122,7 @@ export function DoneStep() {
           <div className="flex items-center gap-2">
             <ShieldCheck size={14} className="text-green-500 shrink-0" />
             <span className="text-[12px] font-medium text-green-600">
-              Accessibility permission granted
+              {isZh ? '辅助功能权限已开启' : 'Accessibility permission granted'}
             </span>
           </div>
         </div>

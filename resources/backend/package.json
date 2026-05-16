@@ -1,0 +1,12 @@
+{
+  "name": "voiceslate-local-backend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Bundled local auth and subscription backend for VoiceSlate desktop builds",
+  "license": "MIT",
+  "dependencies": {
+    "better-auth": "^1.3.10",
+    "stripe": "^22.1.1"
+  }
+}

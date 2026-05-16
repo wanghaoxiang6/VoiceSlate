@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Setup And Usage Docs
+    url: https://github.com/wanghaoxiang6/VoiceSlate#readme
+    about: Read the main setup and usage guide before opening a question.
+  - name: Security Guidance
+    url: https://github.com/wanghaoxiang6/VoiceSlate/blob/main/SECURITY.md
+    about: Review security handling guidance for credentials and local data.

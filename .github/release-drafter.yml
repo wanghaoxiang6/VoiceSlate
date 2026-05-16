@@ -1,0 +1,46 @@
+name-template: 'v$RESOLVED_VERSION'
+tag-template: 'v$RESOLVED_VERSION'
+categories:
+  - title: 'Features'
+    labels:
+      - 'enhancement'
+  - title: 'Bug Fixes'
+    labels:
+      - 'bug'
+  - title: 'Refactoring'
+    labels:
+      - 'refactor'
+  - title: 'Documentation'
+    labels:
+      - 'docs'
+  - title: 'CI / Infrastructure'
+    labels:
+      - 'ci'
+  - title: 'Internationalization'
+    labels:
+      - 'i18n'
+  - title: 'Security'
+    labels:
+      - 'security'
+  - title: 'Dependencies'
+    labels:
+      - 'dependencies'
+change-template: '- $TITLE @$AUTHOR (#$NUMBER)'
+change-title-escapes: '\<*_&'
+version-resolver:
+  major:
+    labels:
+      - 'major'
+  minor:
+    labels:
+      - 'enhancement'
+  patch:
+    labels:
+      - 'bug'
+  default: patch
+template: |
+  ## VoiceSlate Release Notes
+
+  $CHANGES
+
+  **Full Changelog**: https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION

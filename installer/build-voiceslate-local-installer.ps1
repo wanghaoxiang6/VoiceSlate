@@ -63,12 +63,20 @@ Write-Host "Copying default desktop settings..."
 $defaultsRoot = Join-Path $runtimeRoot "defaults"
 New-Item -ItemType Directory -Path $defaultsRoot -Force | Out-Null
 $settingsSource = Join-Path $env:APPDATA "com.voiceslate.app\settings.json"
-$managedLlmSource = Join-Path $env:APPDATA "com.voiceslate.app\settings.json.managed-llm.json"
 if (Test-Path $settingsSource) {
-  Copy-Item -LiteralPath $settingsSource -Destination (Join-Path $defaultsRoot "settings.json") -Force
-}
-if (Test-Path $managedLlmSource) {
-  Copy-Item -LiteralPath $managedLlmSource -Destination (Join-Path $defaultsRoot "settings.json.managed-llm.json") -Force
+  $settings = Get-Content -LiteralPath $settingsSource -Raw | ConvertFrom-Json
+  if ($settings.app_config) {
+    $settings.app_config.stt_api_key = ""
+    $settings.app_config.llm_api_key = ""
+    $settings.app_config.llm_base_url = ""
+    $settings.app_config.llm_model = ""
+  }
+  $settingsJson = $settings | ConvertTo-Json -Depth 100
+  [System.IO.File]::WriteAllText(
+    (Join-Path $defaultsRoot "settings.json"),
+    $settingsJson,
+    [System.Text.UTF8Encoding]::new($false)
+  )
 }
 
 Write-Host "Creating payload zip..."

@@ -62,6 +62,10 @@ Not source-controlled:
 - local settings and user API keys
 - generated desktop installer EXE
 
+The installer may seed non-secret defaults such as `cloud-opus`, but it must
+strip local API keys, custom LLM base URLs, and managed proxy snapshots before
+creating the release payload.
+
 The generated installer is built from the current local runtime using:
 
 ```powershell
@@ -76,4 +80,3 @@ The generated installer is built from the current local runtime using:
 - local command STT health: `http://127.0.0.1:8178/health`
 - provider registry returns `default_provider=cloud-opus`
 - a 10+ second sample succeeds through `cloud-opus`
-

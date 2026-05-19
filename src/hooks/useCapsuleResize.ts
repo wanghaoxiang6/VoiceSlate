@@ -37,15 +37,42 @@ export function useCapsuleResize() {
   const pipelineError = useAppStore((s) => s.pipelineError)
   const contextMenuOpen = useAppStore((s) => s.contextMenuOpen)
   const setContextMenuReady = useAppStore((s) => s.setContextMenuReady)
-  const capsuleAutoHide = useAppStore((s) => s.config.capsule_auto_hide)
   const initialized = useRef(false)
   const prevWindowSize = useRef<{ width: number; height: number } | null>(null)
-  const prevState = useRef<PipelineState>('idle')
-  const prevAutoHide = useRef(false)
-  const isWindows =
-    typeof navigator !== 'undefined' && navigator.platform.toUpperCase().includes('WIN')
 
   const hasError = pipelineError !== null
+
+  useEffect(() => {
+    let interval: number | undefined
+    let disposed = false
+
+    import('@tauri-apps/api/window')
+      .then(({ getCurrentWindow }) => {
+        const win = getCurrentWindow()
+        const keepVisible = async () => {
+          await win.setAlwaysOnTop(true).catch(() => {})
+          const visible = await win.isVisible().catch(() => true)
+          if (!visible) {
+            await win.show().catch(() => {})
+          }
+        }
+
+        void keepVisible()
+        if (!disposed) {
+          interval = window.setInterval(() => {
+            void keepVisible()
+          }, 3000)
+        }
+      })
+      .catch(() => {})
+
+    return () => {
+      disposed = true
+      if (interval !== undefined) {
+        window.clearInterval(interval)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     const size = getSizeForState(pipelineState, capsuleExpanded, hasError, contextMenuOpen)
@@ -56,24 +83,8 @@ export function useCapsuleResize() {
       .then(async ({ getCurrentWindow, LogicalSize, LogicalPosition, currentMonitor }) => {
         const win = getCurrentWindow()
 
-        const becameIdle = prevState.current !== 'idle' && pipelineState === 'idle'
-        const leftIdle = prevState.current === 'idle' && pipelineState !== 'idle'
-        prevState.current = pipelineState
-
-        if (!isWindows && capsuleAutoHide && !contextMenuOpen && !capsuleExpanded) {
-          if (leftIdle) {
-            await win.show().catch(() => {})
-          } else if (becameIdle && initialized.current) {
-            await win.hide().catch(() => {})
-            prevAutoHide.current = capsuleAutoHide
-            return
-          }
-        }
-
-        if (!isWindows && prevAutoHide.current && !capsuleAutoHide && pipelineState === 'idle') {
-          await win.show().catch(() => {})
-        }
-        prevAutoHide.current = capsuleAutoHide
+        await win.setAlwaysOnTop(true).catch(() => {})
+        await win.show().catch(() => {})
 
         if (!initialized.current) {
           await win.setSize(new LogicalSize(windowWidth, windowHeight)).catch(() => {})
@@ -86,13 +97,7 @@ export function useCapsuleResize() {
               const y = Math.round(sh - windowHeight - 80)
               await win.setPosition(new LogicalPosition(x, y)).catch(() => {})
             }
-            if (!capsuleAutoHide || isWindows) {
-              await win.show().catch(() => {})
-            }
           } catch {
-            if (!capsuleAutoHide || isWindows) {
-              await win.show().catch(() => {})
-            }
           }
 
           initialized.current = true
@@ -131,8 +136,6 @@ export function useCapsuleResize() {
     capsuleExpanded,
     hasError,
     contextMenuOpen,
-    capsuleAutoHide,
-    isWindows,
     setContextMenuReady,
   ])
 

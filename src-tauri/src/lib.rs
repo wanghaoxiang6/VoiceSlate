@@ -133,6 +133,20 @@ pub fn refresh_tray(app: &tauri::AppHandle) {
     }
 }
 
+fn spawn_capsule_visibility_guard(app_handle: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            if let Some(capsule) = app_handle.get_webview_window("capsule") {
+                let _ = capsule.set_always_on_top(true);
+                if !capsule.is_visible().unwrap_or(false) {
+                    let _ = capsule.show();
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(3)).await;
+        }
+    });
+}
+
 #[tauri::command]
 async fn start_recording(state: tauri::State<'_, pipeline::PipelineHandle>) -> Result<(), String> {
     state.start().await.map_err(|e| e.to_string())
@@ -1480,6 +1494,10 @@ pub fn run() {
             // Deep-link URL forwarding is handled automatically by the
             // "deep-link" feature of single-instance plugin.
             // Just focus the main window so the user sees the result.
+            if let Some(capsule) = app.get_webview_window("capsule") {
+                let _ = capsule.set_always_on_top(true);
+                let _ = capsule.show();
+            }
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.set_focus();
@@ -1566,8 +1584,10 @@ pub fn run() {
             spawn_windows_alt_hook(app_handle.clone());
 
             if let Some(capsule) = app.get_webview_window("capsule") {
+                let _ = capsule.set_always_on_top(true);
                 let _ = capsule.show();
             }
+            spawn_capsule_visibility_guard(app_handle.clone());
 
             // System tray
             let tray_menu = build_tray_menu(&app_handle, false, true)

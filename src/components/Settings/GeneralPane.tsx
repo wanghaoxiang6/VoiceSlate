@@ -307,11 +307,6 @@ export function GeneralPane() {
               label={t('settings.startMinimized')}
             />
           )}
-          <Toggle
-            checked={config.capsule_auto_hide}
-            onChange={(checked) => updateConfig({ capsule_auto_hide: checked })}
-            label={t('settings.hideCapsuleWhenIdle')}
-          />
         </div>
       </Section>
     </div>

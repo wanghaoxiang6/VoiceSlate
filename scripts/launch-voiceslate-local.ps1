@@ -17,8 +17,13 @@ $fallbackExe = Join-Path $installDir "opentypeless-local.exe"
 $appExe = if (Test-Path $preferredExe) { $preferredExe } else { $fallbackExe }
 $healthUrl = "http://127.0.0.1:8178/health"
 $backendHealthUrl = "http://127.0.0.1:8788/health"
+$cloudProxyUrl = "http://127.0.0.1:7890"
 $env:NO_PROXY = "127.0.0.1,localhost,::1"
 $env:no_proxy = "127.0.0.1,localhost,::1"
+$env:HTTP_PROXY = $cloudProxyUrl
+$env:HTTPS_PROXY = $cloudProxyUrl
+$env:ALL_PROXY = $cloudProxyUrl
+$env:CLOUD_STT_HTTP_PROXY = $cloudProxyUrl
 $env:STT_DEFAULT_PROVIDER = "cloud-opus"
 $env:CLOUD_STT_UPSTREAM_PROVIDER = "volcengine-flash"
 $env:STT_BENCHMARK_PROVIDERS = "local-whisper,volcengine-flash,openai-whisper,groq-whisper,glm-asr,siliconflow,cloud-opus"
@@ -33,6 +38,43 @@ $settingsCandidates = @(
   (Join-Path $env:APPDATA "com.voiceslate.app\settings.json"),
   (Join-Path $env:APPDATA "com.opentypeless.app\settings.json")
 )
+
+function Test-TcpPort([string]$hostName, [int]$portNumber) {
+  try {
+    $client = [System.Net.Sockets.TcpClient]::new()
+    $task = $client.ConnectAsync($hostName, $portNumber)
+    if (-not $task.Wait(1000)) {
+      $client.Dispose()
+      return $false
+    }
+    $client.Dispose()
+    return $true
+  } catch {
+    return $false
+  }
+}
+
+function Start-CloudProxyIfNeeded {
+  if (Test-TcpPort "127.0.0.1" 7890) {
+    return
+  }
+
+  $clashCandidates = @(
+    "D:\clash\Clash for Windows.exe",
+    (Join-Path $env:LOCALAPPDATA "Programs\Clash for Windows\Clash for Windows.exe"),
+    (Join-Path $env:ProgramFiles "Clash for Windows\Clash for Windows.exe")
+  )
+  $clashExe = $clashCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+  if ($clashExe) {
+    Start-Process -FilePath $clashExe -WorkingDirectory (Split-Path -Parent $clashExe) -WindowStyle Minimized
+    for ($i = 0; $i -lt 45; $i++) {
+      Start-Sleep -Seconds 1
+      if (Test-TcpPort "127.0.0.1" 7890) {
+        return
+      }
+    }
+  }
+}
 
 function Set-LocalWhisperProvider {
   foreach ($settingsPath in $settingsCandidates) {
@@ -118,6 +160,7 @@ function Set-ManagedLlmProxy {
 
 Set-LocalWhisperProvider
 Set-ManagedLlmProxy
+Start-CloudProxyIfNeeded
 
 if (-not (Test-Path $appExe)) {
   throw "VoiceSlate app was not found: $appExe"

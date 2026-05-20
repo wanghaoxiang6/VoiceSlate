@@ -79,6 +79,7 @@ const VOLCENGINE_STANDARD_SUBMIT_ENDPOINT =
 const VOLCENGINE_STANDARD_QUERY_ENDPOINT =
   "https://openspeech.bytedance.com/api/v3/auc/bigmodel/query";
 const VOLCENGINE_STANDARD_RESOURCE_ID = "volc.seedasr.auc";
+const LOCAL_CLOUD_PROXY_URL = process.env.CLOUD_STT_HTTP_PROXY || process.env.HTTPS_PROXY || "http://127.0.0.1:7890";
 
 function appDataDir() {
   return (
@@ -615,6 +616,105 @@ function volcengineAuthHeaders(apiKey) {
   };
 }
 
+function errorSummary(error) {
+  return error?.cause?.code || error?.code || error?.message || String(error);
+}
+
+function parseCurlHeaders(rawHeaders) {
+  const blocks = String(rawHeaders || "")
+    .split(/\r?\n\r?\n/)
+    .map((block) => block.trim())
+    .filter((block) => block.startsWith("HTTP/"));
+  const last = blocks[blocks.length - 1] || "";
+  const lines = last.split(/\r?\n/).filter(Boolean);
+  const status = Number(lines[0]?.match(/HTTP\/\S+\s+(\d+)/)?.[1] || 0);
+  const map = new Map();
+  for (const line of lines.slice(1)) {
+    const index = line.indexOf(":");
+    if (index <= 0) continue;
+    map.set(line.slice(0, index).trim().toLowerCase(), line.slice(index + 1).trim());
+  }
+  return { status, map };
+}
+
+async function fetchViaLocalProxy(url, options = {}, maxTimeSeconds = 60) {
+  const id = crypto.randomUUID();
+  const bodyPath = join(backendDataDir, `cloud-proxy-body-${id}.json`);
+  const headersPath = join(backendDataDir, `cloud-proxy-headers-${id}.txt`);
+  const responsePath = join(backendDataDir, `cloud-proxy-response-${id}.json`);
+  const body = options.body == null ? "" : String(options.body);
+  writeFileSync(bodyPath, body);
+
+  const args = [
+    "--silent",
+    "--show-error",
+    "--ssl-no-revoke",
+    "--proxy",
+    LOCAL_CLOUD_PROXY_URL,
+    "--connect-timeout",
+    "10",
+    "--max-time",
+    String(maxTimeSeconds),
+    "-X",
+    options.method || "POST",
+    "-D",
+    headersPath,
+    "-o",
+    responsePath,
+  ];
+  for (const [key, value] of Object.entries(options.headers || {})) {
+    args.push("-H", `${key}: ${value}`);
+  }
+  args.push("--data-binary", `@${bodyPath}`, url);
+
+  try {
+    await execFileAsync("curl.exe", args, {
+      windowsHide: true,
+      timeout: (maxTimeSeconds + 15) * 1000,
+      maxBuffer: 1024 * 1024,
+    });
+    const rawHeaders = existsSync(headersPath) ? readFileSync(headersPath, "utf8") : "";
+    const textBody = existsSync(responsePath) ? readFileSync(responsePath, "utf8") : "";
+    const parsed = parseCurlHeaders(rawHeaders);
+    return {
+      ok: parsed.status >= 200 && parsed.status < 300,
+      status: parsed.status,
+      headers: {
+        get(name) {
+          return parsed.map.get(String(name).toLowerCase()) || null;
+        },
+      },
+      async json() {
+        return JSON.parse(textBody || "{}");
+      },
+      async text() {
+        return textBody;
+      },
+    };
+  } finally {
+    for (const path of [bodyPath, headersPath, responsePath]) {
+      try {
+        if (existsSync(path)) unlinkSync(path);
+      } catch {
+      }
+    }
+  }
+}
+
+async function fetchCloudJson(url, options = {}, directTimeoutMs = 10_000, proxyMaxTimeSeconds = 60) {
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: AbortSignal.timeout(directTimeoutMs),
+    });
+  } catch (error) {
+    console.warn(
+      `[stt-platform] direct cloud request failed (${errorSummary(error)}), retrying via ${LOCAL_CLOUD_PROXY_URL}`,
+    );
+    return fetchViaLocalProxy(url, options, proxyMaxTimeSeconds);
+  }
+}
+
 async function transcribeWithVolcengineFlash(apiKey, wavData) {
   const body = {
     user: { uid: "voiceslate-android" },
@@ -630,7 +730,7 @@ async function transcribeWithVolcengineFlash(apiKey, wavData) {
     },
   };
 
-  const upstream = await fetch(VOLCENGINE_FLASH_ENDPOINT, {
+  const upstream = await fetchCloudJson(VOLCENGINE_FLASH_ENDPOINT, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -640,8 +740,7 @@ async function transcribeWithVolcengineFlash(apiKey, wavData) {
       "X-Api-Sequence": "-1",
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(25_000),
-  });
+  }, 10_000, 60);
 
   const apiStatus = upstream.headers.get("X-Api-Status-Code") || "";
   const apiMessage = upstream.headers.get("X-Api-Message") || "";
@@ -673,7 +772,7 @@ async function transcribeWithVolcengineStandard(apiKey, wavData) {
     },
   };
 
-  const submit = await fetch(VOLCENGINE_STANDARD_SUBMIT_ENDPOINT, {
+  const submit = await fetchCloudJson(VOLCENGINE_STANDARD_SUBMIT_ENDPOINT, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -683,8 +782,7 @@ async function transcribeWithVolcengineStandard(apiKey, wavData) {
       "X-Api-Sequence": "-1",
     },
     body: JSON.stringify(submitBody),
-    signal: AbortSignal.timeout(20_000),
-  });
+  }, 10_000, 60);
   const submitStatus = submit.headers.get("X-Api-Status-Code") || "";
   const submitMessage = submit.headers.get("X-Api-Message") || "";
   const submitData = await submit.json().catch(() => null);
@@ -695,7 +793,7 @@ async function transcribeWithVolcengineStandard(apiKey, wavData) {
   const taskId = submitData?.id || submitData?.task_id || requestId;
   for (let index = 0; index < 90; index += 1) {
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
-    const query = await fetch(VOLCENGINE_STANDARD_QUERY_ENDPOINT, {
+    const query = await fetchCloudJson(VOLCENGINE_STANDARD_QUERY_ENDPOINT, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -705,8 +803,7 @@ async function transcribeWithVolcengineStandard(apiKey, wavData) {
         "X-Api-Sequence": "-1",
       },
       body: JSON.stringify({ id: taskId }),
-      signal: AbortSignal.timeout(15_000),
-    });
+    }, 10_000, 30);
     const queryStatus = query.headers.get("X-Api-Status-Code") || "";
     if (!query.ok || (queryStatus && queryStatus !== "20000000")) {
       continue;
@@ -1280,7 +1377,7 @@ async function handleProxyLlm(req, res) {
   }
 
   const body = await readJsonBody(req);
-  const upstream = await fetch(`${base.replace(/\/$/, "")}/chat/completions`, {
+  const upstream = await fetchCloudJson(`${base.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -1290,7 +1387,7 @@ async function handleProxyLlm(req, res) {
       model,
       messages: body.messages || [],
     }),
-  });
+  }, 10_000, 120);
 
   const data = await upstream.json().catch(() => null);
   if (!upstream.ok || !data) {
@@ -1521,14 +1618,14 @@ async function proxyManagedLlmOpenAiCompat(req, res, pathname) {
     }
   }
 
-  const upstream = await fetch(upstreamUrl, {
+  const upstream = await fetchCloudJson(upstreamUrl, {
     method,
     headers: {
       Authorization: `Bearer ${apiKey}`,
       ...(method === "POST" ? { "Content-Type": contentType } : {}),
     },
     body,
-  });
+  }, 10_000, 120);
 
   if (emulateStream) {
     const data = await upstream.json().catch(() => null);
@@ -1555,7 +1652,14 @@ async function proxyManagedLlmOpenAiCompat(req, res, pathname) {
   }
 
   if (!upstream.body) {
-    res.end();
+    const textBody = await upstream.text().catch(() => "");
+    res.end(textBody);
+    return;
+  }
+
+  if (!upstream.body.getReader) {
+    const textBody = await upstream.text().catch(() => "");
+    res.end(textBody);
     return;
   }
 

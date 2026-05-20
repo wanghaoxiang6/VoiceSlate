@@ -80,6 +80,8 @@ const VOLCENGINE_STANDARD_QUERY_ENDPOINT =
   "https://openspeech.bytedance.com/api/v3/auc/bigmodel/query";
 const VOLCENGINE_STANDARD_RESOURCE_ID = "volc.seedasr.auc";
 const LOCAL_CLOUD_PROXY_URL = process.env.CLOUD_STT_HTTP_PROXY || process.env.HTTPS_PROXY || "http://127.0.0.1:7890";
+const PINNED_DNS_CACHE_MS = 10 * 60 * 1000;
+const pinnedDnsUntilByHost = new Map();
 
 function appDataDir() {
   return (
@@ -529,14 +531,30 @@ async function transcribeWhisperLike(provider, payload) {
 }
 
 async function transcribeWithProvider(provider, payload) {
+  let commandPrecheckMs = 0;
   if (provider.id === "cloud-opus" && payload.audioSeconds && payload.audioSeconds <= 2.2) {
+    const commandStartedAt = performance.now();
     try {
       const commandProvider = resolveSttProvider("local-command", payload.fields);
       const commandResult = await transcribeWhisperLike(commandProvider, payload);
+      commandPrecheckMs = Math.round(performance.now() - commandStartedAt);
       if (["screenshot", "translate", "ask", "prompt"].includes(commandResult.text.trim())) {
-        return { text: commandResult.text.trim(), codec: commandResult.codec || "wav" };
+        return {
+          text: commandResult.text.trim(),
+          codec: commandResult.codec || "wav",
+          timings: {
+            command_precheck_ms: commandPrecheckMs,
+            encode_ms: 0,
+            upstream_ms: 0,
+            parse_ms: 0,
+          },
+        };
       }
+      console.log(
+        `[stt-platform] local command precheck missed text="${commandResult.text.trim()}" latency_ms=${commandPrecheckMs}`,
+      );
     } catch (error) {
+      commandPrecheckMs = Math.round(performance.now() - commandStartedAt);
       console.warn("[stt-platform] local command precheck failed:", error?.message || error);
     }
   }
@@ -548,7 +566,12 @@ async function transcribeWithProvider(provider, payload) {
     return {
       text,
       codec: "wav",
-      timings: { encode_ms: 0, upstream_ms: Math.round(performance.now() - upstreamStartedAt), parse_ms: 0 },
+      timings: {
+        command_precheck_ms: commandPrecheckMs,
+        encode_ms: 0,
+        upstream_ms: Math.round(performance.now() - upstreamStartedAt),
+        parse_ms: 0,
+      },
     };
   }
   if (provider.type === "volcengine-standard") {
@@ -558,10 +581,22 @@ async function transcribeWithProvider(provider, payload) {
     return {
       text,
       codec: "wav",
-      timings: { encode_ms: 0, upstream_ms: Math.round(performance.now() - upstreamStartedAt), parse_ms: 0 },
+      timings: {
+        command_precheck_ms: commandPrecheckMs,
+        encode_ms: 0,
+        upstream_ms: Math.round(performance.now() - upstreamStartedAt),
+        parse_ms: 0,
+      },
     };
   }
-  return transcribeWhisperLike(provider, payload);
+  const result = await transcribeWhisperLike(provider, payload);
+  return {
+    ...result,
+    timings: {
+      command_precheck_ms: commandPrecheckMs,
+      ...(result.timings || {}),
+    },
+  };
 }
 
 async function readMultipartAudio(req, raw) {
@@ -749,15 +784,36 @@ async function fetchViaCurl(url, options = {}, maxTimeSeconds = 60, proxyUrl = "
 }
 
 async function fetchCloudJson(url, options = {}, directTimeoutMs = 10_000, proxyMaxTimeSeconds = 60) {
+  const hostname = (() => {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return "";
+    }
+  })();
+  const pinnedUntil = hostname ? pinnedDnsUntilByHost.get(hostname) || 0 : 0;
+  const shouldUsePinnedDnsFirst = pinnedUntil > Date.now();
+
+  if (!shouldUsePinnedDnsFirst) {
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: AbortSignal.timeout(directTimeoutMs),
+      });
+    } catch (error) {
+      if (hostname) {
+        pinnedDnsUntilByHost.set(hostname, Date.now() + PINNED_DNS_CACHE_MS);
+      }
+      console.warn(
+        `[stt-platform] direct cloud request failed (${errorSummary(error)}), retrying with pinned DNS`,
+      );
+    }
+  }
+
   try {
-    return await fetch(url, {
-      ...options,
-      signal: AbortSignal.timeout(directTimeoutMs),
-    });
-  } catch (error) {
-    console.warn(
-      `[stt-platform] direct cloud request failed (${errorSummary(error)}), retrying with pinned DNS`,
-    );
+    if (shouldUsePinnedDnsFirst) {
+      console.log(`[stt-platform] using pinned DNS for ${hostname}`);
+    }
     try {
       return await fetchViaCurl(url, options, proxyMaxTimeSeconds);
     } catch (firstCurlError) {
@@ -773,6 +829,11 @@ async function fetchCloudJson(url, options = {}, directTimeoutMs = 10_000, proxy
       );
       return fetchViaCurl(url, options, proxyMaxTimeSeconds, LOCAL_CLOUD_PROXY_URL);
     }
+  } catch (error) {
+    if (hostname) {
+      pinnedDnsUntilByHost.delete(hostname);
+    }
+    throw error;
   }
 }
 
@@ -1533,7 +1594,7 @@ function buildCompactPolishSystemPrompt(originalPrompt, hasSelectedText) {
 
 function optimizeVoiceSlatePolishRequest(parsed) {
   if (!isVoiceSlatePolishRequest(parsed)) {
-    return { body: parsed, emulateStream: false };
+    return { body: parsed, emulateStream: false, bypassText: "" };
   }
 
   const optimized = structuredClone(parsed);
@@ -1552,6 +1613,18 @@ function optimizeVoiceSlatePolishRequest(parsed) {
   const transcriptionMatch =
     transcriptionMessage?.content?.match(/<transcription>\s*([\s\S]*?)\s*<\/transcription>/i);
   const transcriptionText = transcriptionMatch?.[1]?.trim() || "";
+  const compactTranscription = transcriptionText.replace(/\s+/g, "");
+  const asksForTranslation = optimized.messages.some(
+    (message) =>
+      typeof message?.content === "string" &&
+      /translate|翻译|target_lang|target language/i.test(message.content),
+  );
+  const shouldBypassPolish =
+    !hasSelectedText &&
+    !asksForTranslation &&
+    compactTranscription.length > 0 &&
+    compactTranscription.length <= 8 &&
+    !/[。！？!?；;：:\n\r]/.test(transcriptionText);
 
   optimized.messages = optimized.messages.map((message) => {
     if (
@@ -1594,7 +1667,32 @@ function optimizeVoiceSlatePolishRequest(parsed) {
 
   const emulateStream = optimized.stream === true;
   optimized.stream = false;
-  return { body: optimized, emulateStream };
+  return {
+    body: optimized,
+    emulateStream,
+    bypassText: shouldBypassPolish ? transcriptionText : "",
+  };
+}
+
+function buildOpenAiCompatCompletion(content, model) {
+  return {
+    id: `voiceslate-${Date.now()}`,
+    object: "chat.completion",
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [
+      {
+        index: 0,
+        message: { role: "assistant", content },
+        finish_reason: "stop",
+      },
+    ],
+    usage: {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: 0,
+    },
+  };
 }
 
 function buildSseChunk({ id, model, content = "", finishReason = null }) {
@@ -1667,16 +1765,28 @@ async function proxyManagedLlmOpenAiCompat(req, res, pathname) {
 
   let body = raw;
   let emulateStream = false;
+  let bypassText = "";
   if (method === "POST" && raw?.length) {
     try {
       const parsed = JSON.parse(raw.toString("utf8"));
-      if (!parsed.model) parsed.model = model;
+      if (!parsed.model || parsed.model === "default") parsed.model = model;
       const optimized = optimizeVoiceSlatePolishRequest(parsed);
       emulateStream = optimized.emulateStream;
+      bypassText = optimized.bypassText || "";
       body = Buffer.from(JSON.stringify(optimized.body), "utf8");
     } catch {
       body = raw;
     }
+  }
+
+  if (bypassText) {
+    const data = buildOpenAiCompatCompletion(bypassText, model);
+    if (emulateStream) {
+      sendOpenAiCompatSse(req, res, data, model);
+    } else {
+      sendJson(req, res, 200, data);
+    }
+    return;
   }
 
   const upstream = await fetchCloudJson(upstreamUrl, {
@@ -1686,7 +1796,7 @@ async function proxyManagedLlmOpenAiCompat(req, res, pathname) {
       ...(method === "POST" ? { "Content-Type": contentType } : {}),
     },
     body,
-  }, 10_000, 120);
+  }, 1_500, 120);
 
   if (emulateStream) {
     const data = await upstream.json().catch(() => null);

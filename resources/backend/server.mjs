@@ -637,60 +637,107 @@ function parseCurlHeaders(rawHeaders) {
   return { status, map };
 }
 
-async function fetchViaLocalProxy(url, options = {}, maxTimeSeconds = 60) {
+async function resolveHostsForCurl(url) {
+  try {
+    const parsed = new URL(url);
+    const { stdout } = await execFileAsync("nslookup.exe", [parsed.hostname, "223.5.5.5"], {
+      windowsHide: true,
+      timeout: 8000,
+      maxBuffer: 256 * 1024,
+    });
+    const ips = Array.from(stdout.matchAll(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g))
+      .map((match) => match[0])
+      .filter((ip) => ip !== "223.5.5.5");
+    const preferredIps =
+      parsed.hostname === "openspeech.bytedance.com"
+        ? [
+            "117.187.26.251",
+            "117.187.26.250",
+            "117.187.26.249",
+            "117.187.26.242",
+            "117.187.26.243",
+            "117.187.26.248",
+            "117.135.224.214",
+            "117.135.224.203",
+          ]
+        : [];
+    return Array.from(new Set([...preferredIps, ...ips]))
+      .filter(Boolean)
+      .map((ip) => `${parsed.hostname}:${parsed.port || "443"}:${ip}`);
+  } catch {
+    return [];
+  }
+}
+
+async function fetchViaCurl(url, options = {}, maxTimeSeconds = 60, proxyUrl = "") {
   const id = crypto.randomUUID();
   const bodyPath = join(backendDataDir, `cloud-proxy-body-${id}.json`);
   const headersPath = join(backendDataDir, `cloud-proxy-headers-${id}.txt`);
   const responsePath = join(backendDataDir, `cloud-proxy-response-${id}.json`);
   const body = options.body == null ? "" : String(options.body);
   writeFileSync(bodyPath, body);
-
-  const args = [
-    "--silent",
-    "--show-error",
-    "--ssl-no-revoke",
-    "--proxy",
-    LOCAL_CLOUD_PROXY_URL,
-    "--connect-timeout",
-    "10",
-    "--max-time",
-    String(maxTimeSeconds),
-    "-X",
-    options.method || "POST",
-    "-D",
-    headersPath,
-    "-o",
-    responsePath,
-  ];
-  for (const [key, value] of Object.entries(options.headers || {})) {
-    args.push("-H", `${key}: ${value}`);
-  }
-  args.push("--data-binary", `@${bodyPath}`, url);
+  const resolveEntries = await resolveHostsForCurl(url);
+  const attempts = proxyUrl ? [null] : (resolveEntries.length ? resolveEntries : [null]);
+  let lastError = null;
 
   try {
-    await execFileAsync("curl.exe", args, {
-      windowsHide: true,
-      timeout: (maxTimeSeconds + 15) * 1000,
-      maxBuffer: 1024 * 1024,
-    });
-    const rawHeaders = existsSync(headersPath) ? readFileSync(headersPath, "utf8") : "";
-    const textBody = existsSync(responsePath) ? readFileSync(responsePath, "utf8") : "";
-    const parsed = parseCurlHeaders(rawHeaders);
-    return {
-      ok: parsed.status >= 200 && parsed.status < 300,
-      status: parsed.status,
-      headers: {
-        get(name) {
-          return parsed.map.get(String(name).toLowerCase()) || null;
-        },
-      },
-      async json() {
-        return JSON.parse(textBody || "{}");
-      },
-      async text() {
-        return textBody;
-      },
-    };
+    for (const resolveEntry of attempts) {
+      const args = [
+        "--silent",
+        "--show-error",
+        "--ssl-no-revoke",
+        ...(proxyUrl ? ["--proxy", proxyUrl] : ["--noproxy", "*"]),
+        "--connect-timeout",
+        "3",
+        "--max-time",
+        String(maxTimeSeconds),
+        "-X",
+        options.method || "POST",
+        "-D",
+        headersPath,
+        "-o",
+        responsePath,
+      ];
+      if (resolveEntry) {
+        args.push("--resolve", resolveEntry);
+      }
+      for (const [key, value] of Object.entries(options.headers || {})) {
+        args.push("-H", `${key}: ${value}`);
+      }
+      args.push("--data-binary", `@${bodyPath}`, url);
+
+      try {
+        await execFileAsync("curl.exe", args, {
+          windowsHide: true,
+          timeout: (maxTimeSeconds + 8) * 1000,
+          maxBuffer: 1024 * 1024,
+        });
+        const rawHeaders = existsSync(headersPath) ? readFileSync(headersPath, "utf8") : "";
+        const textBody = existsSync(responsePath) ? readFileSync(responsePath, "utf8") : "";
+        const parsed = parseCurlHeaders(rawHeaders);
+        return {
+          ok: parsed.status >= 200 && parsed.status < 300,
+          status: parsed.status,
+          headers: {
+            get(name) {
+              return parsed.map.get(String(name).toLowerCase()) || null;
+            },
+          },
+          async json() {
+            return JSON.parse(textBody || "{}");
+          },
+          async text() {
+            return textBody;
+          },
+        };
+      } catch (error) {
+        lastError = error;
+        if (resolveEntry) {
+          console.warn(`[stt-platform] curl cloud request failed via ${resolveEntry}: ${errorSummary(error)}`);
+        }
+      }
+    }
+    throw lastError || new Error("curl cloud request failed");
   } finally {
     for (const path of [bodyPath, headersPath, responsePath]) {
       try {
@@ -709,9 +756,23 @@ async function fetchCloudJson(url, options = {}, directTimeoutMs = 10_000, proxy
     });
   } catch (error) {
     console.warn(
-      `[stt-platform] direct cloud request failed (${errorSummary(error)}), retrying via ${LOCAL_CLOUD_PROXY_URL}`,
+      `[stt-platform] direct cloud request failed (${errorSummary(error)}), retrying with pinned DNS`,
     );
-    return fetchViaLocalProxy(url, options, proxyMaxTimeSeconds);
+    try {
+      return await fetchViaCurl(url, options, proxyMaxTimeSeconds);
+    } catch (firstCurlError) {
+      console.warn(
+        `[stt-platform] first direct curl cloud request failed (${errorSummary(firstCurlError)}), retrying direct once`,
+      );
+    }
+    try {
+      return await fetchViaCurl(url, options, proxyMaxTimeSeconds);
+    } catch (curlError) {
+      console.warn(
+        `[stt-platform] direct curl cloud request failed (${errorSummary(curlError)}), retrying via ${LOCAL_CLOUD_PROXY_URL}`,
+      );
+      return fetchViaCurl(url, options, proxyMaxTimeSeconds, LOCAL_CLOUD_PROXY_URL);
+    }
   }
 }
 
@@ -740,7 +801,7 @@ async function transcribeWithVolcengineFlash(apiKey, wavData) {
       "X-Api-Sequence": "-1",
     },
     body: JSON.stringify(body),
-  }, 10_000, 60);
+  }, 1_500, 60);
 
   const apiStatus = upstream.headers.get("X-Api-Status-Code") || "";
   const apiMessage = upstream.headers.get("X-Api-Message") || "";
@@ -782,7 +843,7 @@ async function transcribeWithVolcengineStandard(apiKey, wavData) {
       "X-Api-Sequence": "-1",
     },
     body: JSON.stringify(submitBody),
-  }, 10_000, 60);
+  }, 1_500, 60);
   const submitStatus = submit.headers.get("X-Api-Status-Code") || "";
   const submitMessage = submit.headers.get("X-Api-Message") || "";
   const submitData = await submit.json().catch(() => null);
@@ -803,7 +864,7 @@ async function transcribeWithVolcengineStandard(apiKey, wavData) {
         "X-Api-Sequence": "-1",
       },
       body: JSON.stringify({ id: taskId }),
-    }, 10_000, 30);
+    }, 1_500, 30);
     const queryStatus = query.headers.get("X-Api-Status-Code") || "";
     if (!query.ok || (queryStatus && queryStatus !== "20000000")) {
       continue;

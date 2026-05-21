@@ -40,6 +40,8 @@ test_api.*
 capsule-debug*.png
 jelly-reference*.png
 *.zip
+__pycache__/
+*.pyc
 .playwright-mcp/
 
 # Database files

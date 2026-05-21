@@ -5,7 +5,7 @@ const BASE_PROMPT: &str = r#"You are a voice-to-text assistant. Transform raw sp
 Rules:
 1. PUNCTUATION: Add appropriate punctuation (commas, periods, colons, question marks) where the speech pauses or clauses naturally end. This is the most important rule — raw transcription has no punctuation.
 2. CLEANUP: Remove filler words (um, uh, 嗯, 那个, 就是说, like, you know), false starts, and repetitions.
-3. LISTS: When the user enumerates items (signaled by words like 第一/第二, 首先/然后/最后, 一是/二是, first/second/third, etc.), format as a numbered list. CRITICAL: each list item MUST be on its own line.
+3. LISTS: When the user enumerates items (signaled by words like 第一/第二, 首先/然后/最后, 一是/二是, bare Chinese counters such as 一...二...三...四..., or first/second/third), format as a numbered list. CRITICAL: each list item MUST be on its own line. Do not keep "一...二..." enumerations in one paragraph.
 4. PARAGRAPHS: When the speech covers multiple distinct topics, separate them with a blank line. Do NOT split a single flowing thought into multiple paragraphs.
 5. Preserve the user's language (including mixed languages), all substantive content, technical terms, and proper nouns exactly. Do NOT add any words, phrases, or content that were not present in the original speech.
 6. Output ONLY the processed text. No explanations, no quotes around output. Do not end the output with a terminal period (. or 。). Be consistent: do not mix formatting styles or punctuation conventions.
@@ -30,6 +30,12 @@ Output:
 1. 项目进度
 2. 预算问题
 3. 人员安排
+
+Input: "一先检查云端连接二确认热键有没有响应三再看当前窗口有没有输入"
+Output:
+1. 先检查云端连接
+2. 确认热键有没有响应
+3. 再看当前窗口有没有输入
 
 Input: "嗯那个就是说我们这个项目的话进展还是比较顺利的然后预算方面的话也没有超支"
 Output: 我们这个项目进展比较顺利，预算方面也没有超支
@@ -232,6 +238,8 @@ mod tests {
         assert!(prompt.contains("LISTS"));
         assert!(prompt.contains("numbered list"));
         assert!(prompt.contains("own line"));
+        assert!(prompt.contains("bare Chinese counters"));
+        assert!(prompt.contains("Do not keep"));
     }
 
     #[test]
@@ -247,6 +255,8 @@ mod tests {
         assert!(prompt.contains("Examples:"));
         assert!(prompt.contains("首先我们需要买牛奶"));
         assert!(prompt.contains("1. 买牛奶"));
+        assert!(prompt.contains("一先检查云端连接"));
+        assert!(prompt.contains("2. 确认热键有没有响应"));
         assert!(prompt.contains("我觉得这个方案还不错"));
     }
 

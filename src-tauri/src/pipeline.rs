@@ -1,5 +1,6 @@
 use anyhow::Result;
 use enigo::{Direction, Enigo, Key, Keyboard, Settings as EnigoSettings};
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::Emitter;
@@ -118,6 +119,72 @@ fn apply_stt_corrections(text: &str, config: &storage::AppConfig) -> String {
         .iter()
         .filter(|item| item.enabled && !item.from.trim().is_empty())
         .fold(text.to_string(), |current, item| current.replace(&item.from, &item.to))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuickAction {
+    Screenshot,
+}
+
+fn normalize_quick_action_text(text: &str) -> String {
+    text.chars()
+        .filter(|ch| {
+            !ch.is_whitespace()
+                && !matches!(
+                    ch,
+                    '.' | ','
+                        | '!'
+                        | '?'
+                        | ';'
+                        | ':'
+                        | '。'
+                        | '，'
+                        | '！'
+                        | '？'
+                        | '；'
+                        | '：'
+                        | '"'
+                        | '\''
+                        | '“'
+                        | '”'
+                        | '‘'
+                        | '’'
+                )
+        })
+        .collect::<String>()
+        .to_lowercase()
+}
+
+fn classify_quick_action(text: &str) -> Option<QuickAction> {
+    match normalize_quick_action_text(text).as_str() {
+        "截图" | "截屏" | "屏幕截图" | "screenshot" | "screenclip" | "screensnip" => {
+            Some(QuickAction::Screenshot)
+        }
+        _ => None,
+    }
+}
+
+fn trigger_quick_action(action: QuickAction) -> Result<()> {
+    match action {
+        QuickAction::Screenshot => {
+            #[cfg(target_os = "windows")]
+            {
+                Command::new("explorer.exe").arg("ms-screenclip:").spawn()?;
+            }
+            #[cfg(target_os = "macos")]
+            {
+                Command::new("screencapture").arg("-i").spawn()?;
+            }
+            #[cfg(target_os = "linux")]
+            {
+                Command::new("sh")
+                    .arg("-c")
+                    .arg("gnome-screenshot -a || spectacle -r || flameshot gui")
+                    .spawn()?;
+            }
+            Ok(())
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
@@ -777,6 +844,24 @@ impl PipelineHandle {
             return Ok(());
         }
 
+        if let Some(action) =
+            classify_quick_action(&corrected_stt_text).or_else(|| classify_quick_action(&raw_text))
+        {
+            match trigger_quick_action(action) {
+                Ok(()) => {
+                    tracing::info!("Handled quick action: {:?}", action);
+                }
+                Err(e) => {
+                    tracing::error!("Quick action failed: {}", e);
+                    let _ = self
+                        .app_handle
+                        .emit("pipeline:error", format!("Quick action failed: {e}"));
+                }
+            }
+            self.set_state(PipelineState::Idle);
+            return Ok(());
+        }
+
         let final_text;
         let llm_elapsed;
 
@@ -1020,7 +1105,7 @@ impl PipelineHandle {
 
 #[cfg(test)]
 mod tests {
-    use super::apply_stt_corrections;
+    use super::{apply_stt_corrections, classify_quick_action, QuickAction};
     use crate::storage::{AppConfig, SttCorrection};
 
     #[test]
@@ -1054,5 +1139,17 @@ mod tests {
         };
 
         assert_eq!(apply_stt_corrections("错词", &config), "错词");
+    }
+
+    #[test]
+    fn screenshot_quick_action_requires_short_exact_intent() {
+        assert_eq!(classify_quick_action("截图"), Some(QuickAction::Screenshot));
+        assert_eq!(
+            classify_quick_action("screenshot"),
+            Some(QuickAction::Screenshot)
+        );
+        assert_eq!(classify_quick_action("截图。"), Some(QuickAction::Screenshot));
+        assert_eq!(classify_quick_action("我刚才说的是截图这两个字"), None);
+        assert_eq!(classify_quick_action("这句话里包含 screenshot 这个词"), None);
     }
 }

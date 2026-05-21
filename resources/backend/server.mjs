@@ -1553,6 +1553,8 @@ function buildCompactPolishSystemPrompt(originalPrompt, hasSelectedText) {
     "Remove filler words, false starts, and obvious repetitions.",
     "Preserve the user's language, meaning, names, technical terms, and mixed-language text exactly.",
     "If the speaker clearly enumerates items, format them as a numbered list with one item per line.",
+    "Treat bare Chinese enumeration such as 一...二...三...四..., 第一/第二, 一是/二是, or 首先/然后/最后 as list intent; do not keep those items in one paragraph.",
+    "Example: input '一先检查云端连接二确认热键有没有响应三再看当前窗口有没有输入' -> output '1. 先检查云端连接\\n2. 确认热键有没有响应\\n3. 再看当前窗口有没有输入'.",
     "Output only the final text.",
   ];
 

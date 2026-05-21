@@ -54,24 +54,41 @@ function HotkeyRecorder() {
   const [modifierHint, setModifierHint] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const autoConfirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hotkeyPausedRef = useRef(false)
+
+  const clearAutoConfirmTimer = useCallback(() => {
+    if (autoConfirmTimer.current) {
+      clearTimeout(autoConfirmTimer.current)
+      autoConfirmTimer.current = null
+    }
+  }, [])
+
+  const resumePausedHotkey = useCallback(() => {
+    if (!hotkeyPausedRef.current) return
+    hotkeyPausedRef.current = false
+    resumeHotkey().catch(() => {})
+  }, [])
 
   const confirmHotkey = useCallback(
     (hotkey: string) => {
+      clearAutoConfirmTimer()
       setRecording(false)
       setError(null)
       setModifierHint(null)
       updateHotkey(hotkey)
         .then(() => {
+          hotkeyPausedRef.current = false
           updateConfig({ hotkey })
           setPending(null)
         })
         .catch((e) => {
+          hotkeyPausedRef.current = false
           setError(String(e))
           setPending(null)
           resumeHotkey().catch(() => {})
         })
     },
-    [updateConfig],
+    [clearAutoConfirmTimer, updateConfig],
   )
 
   const handleKeyDown = useCallback(
@@ -83,7 +100,7 @@ function HotkeyRecorder() {
       if (sideKey) {
         setModifierHint(null)
         setPending(sideKey)
-        if (autoConfirmTimer.current) clearTimeout(autoConfirmTimer.current)
+        clearAutoConfirmTimer()
         autoConfirmTimer.current = setTimeout(() => {
           confirmHotkey(sideKey)
         }, 600)
@@ -134,12 +151,12 @@ function HotkeyRecorder() {
       setPending(combo)
 
       // Auto-confirm after 1.5 seconds
-      if (autoConfirmTimer.current) clearTimeout(autoConfirmTimer.current)
+      clearAutoConfirmTimer()
       autoConfirmTimer.current = setTimeout(() => {
         confirmHotkey(combo)
       }, 1500)
     },
-    [confirmHotkey],
+    [clearAutoConfirmTimer, confirmHotkey],
   )
 
   const handleKeyUp = useCallback(() => {
@@ -153,24 +170,32 @@ function HotkeyRecorder() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown, true)
       window.removeEventListener('keyup', handleKeyUp, true)
-      if (autoConfirmTimer.current) clearTimeout(autoConfirmTimer.current)
+      clearAutoConfirmTimer()
     }
-  }, [recording, handleKeyDown, handleKeyUp])
+  }, [recording, handleKeyDown, handleKeyUp, clearAutoConfirmTimer])
+
+  useEffect(() => {
+    return () => {
+      clearAutoConfirmTimer()
+      resumePausedHotkey()
+    }
+  }, [clearAutoConfirmTimer, resumePausedHotkey])
 
   const handleClick = () => {
     if (recording && pending) {
       // Confirm immediately on click
-      if (autoConfirmTimer.current) clearTimeout(autoConfirmTimer.current)
+      clearAutoConfirmTimer()
       confirmHotkey(pending)
     } else if (recording) {
       // Cancel recording — re-register the old hotkey
       setRecording(false)
       setPending(null)
       setModifierHint(null)
-      if (autoConfirmTimer.current) clearTimeout(autoConfirmTimer.current)
-      resumeHotkey().catch(() => {})
+      clearAutoConfirmTimer()
+      resumePausedHotkey()
     } else {
       // Start recording — unregister global shortcut so webview can capture keys
+      hotkeyPausedRef.current = true
       pauseHotkey().catch(() => {})
       setRecording(true)
       setPending(null)

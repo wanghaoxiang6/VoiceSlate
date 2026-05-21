@@ -51,12 +51,26 @@ pub fn detect_current_app() -> AppContext {
 }
 
 pub fn is_self_app(app_name: &str) -> bool {
-    let lowered = app_name.to_lowercase();
-    lowered.contains("opentypeless")
-        || lowered.contains("opentypeless-local")
-        || lowered.contains("voiceslate")
-        || lowered.contains("voiceslate-local")
-        || lowered.contains("open typeless")
+    is_self_window(app_name, "")
+}
+
+pub fn is_self_window(app_name: &str, window_title: &str) -> bool {
+    let app = app_name.to_lowercase();
+    let title = window_title.to_lowercase();
+    let self_process = app.contains("opentypeless")
+        || app.contains("opentypeless-local")
+        || app.contains("voiceslate")
+        || app.contains("voiceslate-local")
+        || app.contains("open typeless");
+    let self_window_title = matches!(
+        title.trim(),
+        "voiceslate" | "voiceslate capsule" | "opentypeless" | "opentypeless capsule"
+    );
+    self_process || self_window_title
+}
+
+pub fn is_self_context(ctx: &AppContext) -> bool {
+    is_self_window(&ctx.app_name, &ctx.window_title)
 }
 
 #[cfg(target_os = "macos")]
@@ -105,7 +119,7 @@ fn macos_detect() -> AppContext {
 #[cfg(target_os = "windows")]
 fn windows_detect() -> AppContext {
     let current = windows_detect_raw();
-    if !is_self_app(&current.app_name) && current.window_handle != 0 {
+    if !is_self_context(&current) && current.window_handle != 0 {
         *last_external_app().lock().unwrap_or_else(|e| e.into_inner()) = Some(current.clone());
         return current;
     }
@@ -165,7 +179,7 @@ fn windows_detect_raw() -> AppContext {
 #[cfg(target_os = "windows")]
 pub fn refresh_last_external_app() {
     let current = windows_detect_raw();
-    if !is_self_app(&current.app_name) && current.window_handle != 0 {
+    if !is_self_context(&current) && current.window_handle != 0 {
         *last_external_app().lock().unwrap_or_else(|e| e.into_inner()) = Some(current);
     }
 }
@@ -270,5 +284,22 @@ fn classify_app(app_name: &str) -> AppType {
         AppType::Document
     } else {
         AppType::General
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_self_window;
+
+    #[test]
+    fn detects_tauri_capsule_webview_as_self_window() {
+        assert!(is_self_window("msedgewebview2.exe", "VoiceSlate Capsule"));
+        assert!(is_self_window("msedgewebview2.exe", "VoiceSlate"));
+    }
+
+    #[test]
+    fn does_not_mark_normal_external_windows_as_self() {
+        assert!(!is_self_window("Code.exe", "main.rs - VoiceSlate-src"));
+        assert!(!is_self_window("chrome.exe", "ChatGPT"));
     }
 }

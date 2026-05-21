@@ -1,6 +1,17 @@
 # VoiceSlate Stable Desktop Build Notes
 
-Last updated: 2026-05-16
+Last updated: 2026-05-21
+
+## Stability Contract
+
+Before changing VoiceSlate speech recognition, hotkeys, capsule behavior,
+output routing, packaging, or GitHub releases, read and follow:
+
+- `docs/VOICE_RUNTIME_CONTRACT_zh.md`
+- `docs/VOICE_STABILITY_AUDIT_zh.md`
+
+The contract is the source of truth for the current stable runtime:
+`AltRight / toggle / keyboard / cloud-opus`.
 
 ## Default STT Routing
 
@@ -61,10 +72,6 @@ Not source-controlled:
 - bundled Node runtime
 - local settings and user API keys
 - generated desktop installer EXE
-
-The installer may seed non-secret defaults such as `cloud-opus`, but it must
-strip local API keys, custom LLM base URLs, and managed proxy snapshots before
-creating the release payload.
 
 The generated installer is built from the current local runtime using:
 

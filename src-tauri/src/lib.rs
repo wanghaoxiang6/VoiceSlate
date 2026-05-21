@@ -148,7 +148,20 @@ fn spawn_capsule_visibility_guard(app_handle: tauri::AppHandle) {
 }
 
 #[tauri::command]
-async fn start_recording(state: tauri::State<'_, pipeline::PipelineHandle>) -> Result<(), String> {
+async fn start_recording(
+    app: tauri::AppHandle,
+    config_state: tauri::State<'_, storage::ConfigManager>,
+    state: tauri::State<'_, pipeline::PipelineHandle>,
+) -> Result<(), String> {
+    let hotkey_paused = app
+        .try_state::<HotkeyPausedCache>()
+        .map(|paused| paused.0.load(Ordering::SeqCst))
+        .unwrap_or(false);
+    if hotkey_paused {
+        if let Err(e) = resume_hotkey_impl(&app, config_state.inner()).await {
+            tracing::warn!("Failed to auto-resume hotkey before recording: {}", e);
+        }
+    }
     state.start().await.map_err(|e| e.to_string())
 }
 
@@ -1023,6 +1036,13 @@ async fn resume_hotkey(
     app: tauri::AppHandle,
     config_state: tauri::State<'_, storage::ConfigManager>,
 ) -> Result<(), String> {
+    resume_hotkey_impl(&app, config_state.inner()).await
+}
+
+async fn resume_hotkey_impl(
+    app: &tauri::AppHandle,
+    config_state: &storage::ConfigManager,
+) -> Result<(), String> {
     let config = config_state.load().await.map_err(|e| e.to_string())?;
     let shortcut = parse_hotkey(&config.hotkey).unwrap_or_else(default_shortcut);
     // Ensure clean state, then register
@@ -1036,13 +1056,13 @@ async fn resume_hotkey(
                 "Failed to resume AltRight global shortcut, custom watcher remains active: {}",
                 e
             );
-            register_windows_backup_shortcuts(&app, &config.hotkey);
+            register_windows_backup_shortcuts(app, &config.hotkey);
             Ok(())
         } else {
             Err(e.to_string())
         }
     } else {
-        register_windows_backup_shortcuts(&app, &config.hotkey);
+        register_windows_backup_shortcuts(app, &config.hotkey);
         Ok(())
     }
 }

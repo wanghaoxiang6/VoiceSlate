@@ -162,6 +162,7 @@ MUST：
 - 启动时必须 show capsule，并设为 always-on-top。
 - 必须维护上一个非 VoiceSlate 外部窗口。
 - 输出前必须恢复录音开始前的目标窗口。
+- `keyboard` 输出模式下，短文本可以模拟键盘输入；长文本或多行文本必须自动改用临时剪贴板粘贴，并在粘贴后恢复用户原剪贴板。
 - `msedgewebview2.exe + VoiceSlate Capsule` 必须识别为 VoiceSlate 自身窗口。
 - `Code.exe + VoiceSlate-src` 这类外部编辑器窗口不得被误判为 VoiceSlate 自身。
 
@@ -169,6 +170,7 @@ MUST NOT：
 
 - 不得把胶囊窗口当成输出目标。
 - 不得用窗口标题“包含 VoiceSlate”这种宽泛规则排除外部窗口。
+- 不得让长文本继续依赖逐字键盘模拟；Windows 输入缓冲、输入法和焦点抖动会导致文字丢失或打到错误窗口。
 - 不得删除 app detector 相关回归测试。
 
 ## 8. “speech was recorded” 合同

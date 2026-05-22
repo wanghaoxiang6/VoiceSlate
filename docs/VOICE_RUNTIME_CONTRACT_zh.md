@@ -35,17 +35,20 @@ MUST NOT：
 - Output mode：`keyboard`
 - Capsule：必须常驻，`capsule_auto_hide=false`
 - Backend health：`http://127.0.0.1:8788/health`
-- Local command STT health：`http://127.0.0.1:8178/health`
+- Local command STT health：`http://127.0.0.1:8178/health`，仅作为短命令加速路线，不得阻塞普通听写。
 
 MUST：
 
 - 发布前确认安装版 exe hash 与构建产物 hash 一致。
 - 发布前确认桌面安装包默认 `stt_api_key` 和 `llm_api_key` 为空。
-- 发布前确认 `8788` 和 `8178` 正常监听。
+- 发布前确认 `8788` 正常监听；`8178` 如果因本地 Whisper/运行库崩溃不可用，launcher 必须记录日志并继续启动主程序。
+- `8178` 是可选短命令预检服务，启动等待不得超过数秒，不能拖慢开机后主程序可用时间。
 
 MUST NOT：
 
 - 不得让桌面快捷方式直接指向裸 `voiceslate.exe`，必须通过 launcher 启动 sidecar。
+- 不得让 Windows 开机启动项指向裸 `voiceslate.exe`，必须指向 `wscript.exe "...\\launch-voiceslate-local.vbs"`。
+- 不得让本地短命令服务 `8178` 的失败阻塞云端长听写 backend `8788`。
 - 不得保留多个会被用户误点的旧安装包、旧快捷方式或旧 exe。
 
 ## 2. STT Provider 合同

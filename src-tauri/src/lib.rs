@@ -17,6 +17,7 @@ use tracing_subscriber::EnvFilter;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -56,6 +57,56 @@ pub struct SessionTokenStore(pub Arc<Mutex<String>>);
 /// Managed tray icon handle for dynamic menu/tooltip updates.
 pub struct TrayHandle {
     pub tray: Mutex<tauri::tray::TrayIcon>,
+}
+
+#[cfg(target_os = "windows")]
+fn set_windows_launcher_autostart(enabled: bool) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let install_dir = exe
+        .parent()
+        .ok_or_else(|| "Failed to resolve VoiceSlate install directory".to_string())?;
+    let launcher = install_dir.join("launch-voiceslate-local.vbs");
+    let run_key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+
+    let status = if enabled {
+        let value = format!("wscript.exe \"{}\"", launcher.display());
+        Command::new("reg")
+            .args(["add", run_key, "/v", "VoiceSlate", "/t", "REG_SZ", "/d"])
+            .arg(value)
+            .args(["/f"])
+            .status()
+            .map_err(|e| e.to_string())?
+    } else {
+        Command::new("reg")
+            .args(["delete", run_key, "/v", "VoiceSlate", "/f"])
+            .status()
+            .map_err(|e| e.to_string())?
+    };
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Failed to update Windows startup registry, exit code {:?}",
+            status.code()
+        ))
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_platform_autostart(app: &tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let autolaunch = app.autolaunch();
+    if enabled {
+        autolaunch.enable().map_err(|e| e.to_string())
+    } else {
+        autolaunch.disable().map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn set_platform_autostart(_app: &tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    set_windows_launcher_autostart(enabled)
 }
 
 /// Persisted window position and size.
@@ -962,13 +1013,7 @@ async fn set_auto_start(
     config_state: tauri::State<'_, storage::ConfigManager>,
     enabled: bool,
 ) -> Result<(), String> {
-    use tauri_plugin_autostart::ManagerExt;
-    let autolaunch = app.autolaunch();
-    if enabled {
-        autolaunch.enable().map_err(|e| e.to_string())?;
-    } else {
-        autolaunch.disable().map_err(|e| e.to_string())?;
-    }
+    set_platform_autostart(&app, enabled)?;
     let mut config = config_state.load().await.map_err(|e| e.to_string())?;
     config.auto_start = enabled;
     config_state
@@ -1573,16 +1618,10 @@ pub fn run() {
             ))));
             app.manage(SessionTokenStore(Arc::new(Mutex::new(String::new()))));
 
-            // Sync auto-start state with system
-            {
-                use tauri_plugin_autostart::ManagerExt;
-                let autolaunch = app.handle().autolaunch();
-                let is_enabled = autolaunch.is_enabled().unwrap_or(false);
-                if initial_config.auto_start && !is_enabled {
-                    let _ = autolaunch.enable();
-                } else if !initial_config.auto_start && is_enabled {
-                    let _ = autolaunch.disable();
-                }
+            // Sync auto-start state with system. On Windows this must point to
+            // the launcher, not the bare exe, otherwise sidecars never start.
+            if let Err(e) = set_platform_autostart(app.handle(), initial_config.auto_start) {
+                tracing::warn!("Failed to sync auto-start: {}", e);
             }
 
             // Register global shortcut from config

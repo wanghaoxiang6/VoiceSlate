@@ -18,12 +18,9 @@ $appExe = if (Test-Path $preferredExe) { $preferredExe } else { $fallbackExe }
 $healthUrl = "http://127.0.0.1:8178/health"
 $backendHealthUrl = "http://127.0.0.1:8788/health"
 $cloudProxyUrl = "http://127.0.0.1:7890"
+$launcherLog = Join-Path $backendLogDir "launcher.log"
 $env:NO_PROXY = "127.0.0.1,localhost,::1"
 $env:no_proxy = "127.0.0.1,localhost,::1"
-$env:HTTP_PROXY = $cloudProxyUrl
-$env:HTTPS_PROXY = $cloudProxyUrl
-$env:ALL_PROXY = $cloudProxyUrl
-$env:CLOUD_STT_HTTP_PROXY = $cloudProxyUrl
 $env:STT_DEFAULT_PROVIDER = "cloud-opus"
 $env:CLOUD_STT_UPSTREAM_PROVIDER = "volcengine-flash"
 $env:STT_BENCHMARK_PROVIDERS = "local-whisper,volcengine-flash,openai-whisper,groq-whisper,glm-asr,siliconflow,cloud-opus"
@@ -54,25 +51,30 @@ function Test-TcpPort([string]$hostName, [int]$portNumber) {
   }
 }
 
-function Start-CloudProxyIfNeeded {
-  if (Test-TcpPort "127.0.0.1" 7890) {
-    return
-  }
-
-  $clashCandidates = @(
-    "D:\clash\Clash for Windows.exe",
-    (Join-Path $env:LOCALAPPDATA "Programs\Clash for Windows\Clash for Windows.exe"),
-    (Join-Path $env:ProgramFiles "Clash for Windows\Clash for Windows.exe")
-  )
-  $clashExe = $clashCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-  if ($clashExe) {
-    Start-Process -FilePath $clashExe -WorkingDirectory (Split-Path -Parent $clashExe) -WindowStyle Minimized
-    for ($i = 0; $i -lt 45; $i++) {
-      Start-Sleep -Seconds 1
-      if (Test-TcpPort "127.0.0.1" 7890) {
-        return
-      }
+function Write-LauncherLog([string]$message) {
+  try {
+    if (-not (Test-Path $backendLogDir)) {
+      New-Item -ItemType Directory -Path $backendLogDir -Force | Out-Null
     }
+    $line = "$(Get-Date -Format o) $message"
+    Add-Content -LiteralPath $launcherLog -Value $line -Encoding UTF8
+  } catch {
+  }
+}
+
+function Set-CloudProxyEnvIfAvailable {
+  if (Test-TcpPort "127.0.0.1" 7890) {
+    $env:HTTP_PROXY = $cloudProxyUrl
+    $env:HTTPS_PROXY = $cloudProxyUrl
+    $env:ALL_PROXY = $cloudProxyUrl
+    $env:CLOUD_STT_HTTP_PROXY = $cloudProxyUrl
+    Write-LauncherLog "Using existing local proxy at $cloudProxyUrl."
+  } else {
+    Remove-Item Env:\HTTP_PROXY -ErrorAction SilentlyContinue
+    Remove-Item Env:\HTTPS_PROXY -ErrorAction SilentlyContinue
+    Remove-Item Env:\ALL_PROXY -ErrorAction SilentlyContinue
+    Remove-Item Env:\CLOUD_STT_HTTP_PROXY -ErrorAction SilentlyContinue
+    Write-LauncherLog "Local proxy 127.0.0.1:7890 is not running; continuing without launching proxy."
   }
 }
 
@@ -160,7 +162,7 @@ function Set-ManagedLlmProxy {
 
 Set-LocalWhisperProvider
 Set-ManagedLlmProxy
-Start-CloudProxyIfNeeded
+Set-CloudProxyEnvIfAvailable
 
 if (-not (Test-Path $appExe)) {
   throw "VoiceSlate app was not found: $appExe"
@@ -168,7 +170,7 @@ if (-not (Test-Path $appExe)) {
 
 function Test-LocalSttHealth {
   try {
-    $response = Invoke-RestMethod -Uri $healthUrl -Method Get -TimeoutSec 2
+    $response = Invoke-RestMethod -Uri $healthUrl -Method Get -TimeoutSec 1
     return $response.status -eq "ok"
   } catch {
     return $false
@@ -209,41 +211,8 @@ if ($sttProvider -eq "local-whisper" -or $sttProvider -eq "cloud-opus") {
     New-Item -ItemType Directory -Path $backendLogDir -Force | Out-Null
   }
 
-  if (-not (Test-Path $pythonExe)) {
-    throw "Local STT Python runtime was not found: $pythonExe"
-  }
-
-  if (-not (Test-Path $serverScript)) {
-    throw "Local STT server script was not found: $serverScript"
-  }
-
-  if (-not (Test-LocalSttHealth)) {
-    if (Test-Path $localModel) {
-      $env:OPENTYPELESS_LOCAL_STT_MODEL = $localModel
-    } elseif (Test-Path $tinyModel) {
-      $env:OPENTYPELESS_LOCAL_STT_MODEL = "tiny"
-    }
-    $env:OPENTYPELESS_LOCAL_STT_COMMAND_MODEL = "tiny"
-    $env:OPENTYPELESS_LOCAL_STT_MODELS = Join-Path $serverRoot "models"
-    $env:HF_HUB_DISABLE_XET = "1"
-    $env:HF_HUB_DISABLE_SYMLINKS_WARNING = "1"
-    Start-Process -FilePath $pythonExe -ArgumentList @("`"$serverScript`"") -WorkingDirectory $serverRoot -WindowStyle Hidden
-
-    $ready = $false
-    for ($i = 0; $i -lt 120; $i++) {
-      Start-Sleep -Seconds 1
-      if (Test-LocalSttHealth) {
-        $ready = $true
-        break
-      }
-    }
-
-    if (-not $ready) {
-      throw "Local STT service did not become ready in time."
-    }
-  }
-
   if ((Test-Path $backendNode) -and (Test-Path $backendScript) -and (-not (Test-BackendHealth))) {
+    Write-LauncherLog "Starting backend 8788."
     Start-Process -FilePath $backendNode -ArgumentList @("`"$backendScript`"") -WorkingDirectory $backendRoot -WindowStyle Hidden -RedirectStandardOutput $backendStdOut -RedirectStandardError $backendStdErr
 
     $backendReady = $false
@@ -257,6 +226,41 @@ if ($sttProvider -eq "local-whisper" -or $sttProvider -eq "cloud-opus") {
 
     if (-not $backendReady) {
       throw "Local backend service did not become ready in time."
+    }
+  }
+
+  if (-not (Test-LocalSttHealth)) {
+    if (-not (Test-Path $pythonExe)) {
+      Write-LauncherLog "Local STT Python runtime was not found: $pythonExe"
+    } elseif (-not (Test-Path $serverScript)) {
+      Write-LauncherLog "Local STT server script was not found: $serverScript"
+    } else {
+      if (Test-Path $localModel) {
+        $env:OPENTYPELESS_LOCAL_STT_MODEL = $localModel
+      } elseif (Test-Path $tinyModel) {
+        $env:OPENTYPELESS_LOCAL_STT_MODEL = "tiny"
+      }
+      $env:OPENTYPELESS_LOCAL_STT_COMMAND_MODEL = "tiny"
+      $env:OPENTYPELESS_LOCAL_STT_MODELS = Join-Path $serverRoot "models"
+      $env:OPENTYPELESS_LOCAL_STT_TIMING_LOG = Join-Path $env:APPDATA "com.voiceslate.app\logs\local-stt-timing.jsonl"
+      $env:HF_HUB_DISABLE_XET = "1"
+      $env:HF_HUB_DISABLE_SYMLINKS_WARNING = "1"
+      $env:PYTHONFAULTHANDLER = "1"
+      Write-LauncherLog "Starting optional local command STT 8178."
+      Start-Process -FilePath $pythonExe -ArgumentList @("-X", "faulthandler", "-u", "`"$serverScript`"") -WorkingDirectory $serverRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $backendLogDir "local-stt.stdout.log") -RedirectStandardError (Join-Path $backendLogDir "local-stt.stderr.log")
+
+      $ready = $false
+      for ($i = 0; $i -lt 4; $i++) {
+        Start-Sleep -Milliseconds 500
+        if (Test-LocalSttHealth) {
+          $ready = $true
+          break
+        }
+      }
+
+      if (-not $ready) {
+        Write-LauncherLog "Optional local command STT 8178 did not become ready; continuing because cloud-opus uses backend 8788."
+      }
     }
   }
 }

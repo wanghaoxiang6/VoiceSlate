@@ -120,7 +120,9 @@ fn macos_detect() -> AppContext {
 fn windows_detect() -> AppContext {
     let current = windows_detect_raw();
     if !is_self_context(&current) && current.window_handle != 0 {
-        *last_external_app().lock().unwrap_or_else(|e| e.into_inner()) = Some(current.clone());
+        *last_external_app()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(current.clone());
         return current;
     }
 
@@ -180,7 +182,9 @@ fn windows_detect_raw() -> AppContext {
 pub fn refresh_last_external_app() {
     let current = windows_detect_raw();
     if !is_self_context(&current) && current.window_handle != 0 {
-        *last_external_app().lock().unwrap_or_else(|e| e.into_inner()) = Some(current);
+        *last_external_app()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(current);
     }
 }
 

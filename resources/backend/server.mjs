@@ -532,7 +532,12 @@ async function transcribeWhisperLike(provider, payload) {
 
 async function transcribeWithProvider(provider, payload) {
   let commandPrecheckMs = 0;
-  if (provider.id === "cloud-opus" && payload.audioSeconds && payload.audioSeconds <= 2.2) {
+  if (
+    process.env.STT_ENABLE_LOCAL_COMMAND_PRECHECK === "1" &&
+    provider.id === "cloud-opus" &&
+    payload.audioSeconds &&
+    payload.audioSeconds <= 2.2
+  ) {
     const commandStartedAt = performance.now();
     try {
       const commandProvider = resolveSttProvider("local-command", payload.fields);

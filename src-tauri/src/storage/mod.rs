@@ -289,7 +289,7 @@ impl HistoryStore {
                 duration_ms,
                 stt_provider,
                 llm_provider
-             FROM history ORDER BY id DESC LIMIT ?1 OFFSET ?2"
+             FROM history ORDER BY id DESC LIMIT ?1 OFFSET ?2",
         )?;
         let rows = stmt.query_map(rusqlite::params![limit, offset], |row| {
             Ok(HistoryEntry {
@@ -316,7 +316,9 @@ impl HistoryStore {
 
     pub async fn update_correction(&self, id: i64, corrected_text: Option<&str>) -> Result<()> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let normalized = corrected_text.map(str::trim).filter(|text| !text.is_empty());
+        let normalized = corrected_text
+            .map(str::trim)
+            .filter(|text| !text.is_empty());
         let existing = conn
             .query_row(
                 "SELECT raw_text, polished_text FROM history WHERE id = ?1",
@@ -427,7 +429,8 @@ impl HistoryStore {
                 .filter(|text| !text.is_empty())
                 .map(str::to_string)
                 .unwrap_or_else(|| polished_text.clone());
-            let input_tokens = estimate_llm_tokens(&raw_text) + prompt_overhead_tokens(&llm_provider);
+            let input_tokens =
+                estimate_llm_tokens(&raw_text) + prompt_overhead_tokens(&llm_provider);
             let fallback_text = if display_text.trim().is_empty() {
                 raw_text
             } else {
@@ -444,8 +447,7 @@ impl HistoryStore {
 
             let output_tokens = estimate_llm_tokens(&fallback_text);
             let stt_cost_cny = estimate_stt_cost_cny(duration_ms.unwrap_or(0), &stt_provider);
-            let llm_cost_usd =
-                estimate_llm_cost_usd(input_tokens, output_tokens, &llm_provider);
+            let llm_cost_usd = estimate_llm_cost_usd(input_tokens, output_tokens, &llm_provider);
 
             stats.total_llm_input_tokens += input_tokens;
             stats.total_llm_output_tokens += output_tokens;
@@ -485,11 +487,16 @@ impl HistoryStore {
 fn ensure_history_column(conn: &Connection, column_name: &str, definition: &str) -> Result<()> {
     let mut stmt = conn.prepare("PRAGMA table_info(history)")?;
     let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
-    let exists = columns.filter_map(|c| c.ok()).any(|name| name == column_name);
+    let exists = columns
+        .filter_map(|c| c.ok())
+        .any(|name| name == column_name);
 
     if !exists {
         conn.execute(
-            &format!("ALTER TABLE history ADD COLUMN {} {}", column_name, definition),
+            &format!(
+                "ALTER TABLE history ADD COLUMN {} {}",
+                column_name, definition
+            ),
             [],
         )?;
     }

@@ -71,9 +71,7 @@ pub fn create_provider(
                     "http://127.0.0.1:8788/api/proxy/stt?provider=volcengine-standard"
                 }
                 "glm-asr" => "http://127.0.0.1:8788/api/proxy/stt?provider=glm-asr",
-                "openai-whisper" => {
-                    "http://127.0.0.1:8788/api/proxy/stt?provider=openai-whisper"
-                }
+                "openai-whisper" => "http://127.0.0.1:8788/api/proxy/stt?provider=openai-whisper",
                 "groq-whisper" => "http://127.0.0.1:8788/api/proxy/stt?provider=groq-whisper",
                 "siliconflow" => "http://127.0.0.1:8788/api/proxy/stt?provider=siliconflow",
                 _ => "http://127.0.0.1:8788/api/proxy/stt?provider=cloud-opus",

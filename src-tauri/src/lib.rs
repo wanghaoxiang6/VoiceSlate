@@ -6,6 +6,8 @@ pub mod pipeline;
 pub mod storage;
 pub mod stt;
 
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Emitter;
@@ -14,10 +16,8 @@ use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_store::StoreExt;
 use tracing_subscriber::EnvFilter;
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine;
 
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -29,6 +29,162 @@ pub const DEFAULT_API_BASE_URL: &str = "https://example.invalid";
 pub fn api_base_url() -> String {
     std::env::var("API_BASE_URL").unwrap_or_else(|_| DEFAULT_API_BASE_URL.to_string())
 }
+
+fn app_data_root() -> Option<std::path::PathBuf> {
+    std::env::var_os("APPDATA")
+        .map(std::path::PathBuf::from)
+        .map(|path| path.join("com.voiceslate.app"))
+}
+
+fn init_logging() {
+    let filter = EnvFilter::from_default_env().add_directive(
+        "voiceslate=debug"
+            .parse()
+            .expect("static directive is valid"),
+    );
+    let log_path = app_data_root().map(|root| {
+        root.join("logs").join(format!(
+            "voiceslate.log.{}",
+            chrono::Local::now().format("%Y-%m-%d")
+        ))
+    });
+
+    if let Some(path) = log_path {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            tracing_subscriber::fmt()
+                .with_ansi(false)
+                .with_env_filter(filter)
+                .with_writer(move || {
+                    file.try_clone()
+                        .expect("failed to clone VoiceSlate log file handle")
+                })
+                .init();
+            return;
+        }
+    }
+
+    tracing_subscriber::fmt().with_env_filter(filter).init();
+}
+
+#[cfg(target_os = "windows")]
+fn append_launcher_log(message: &str) {
+    if let Some(root) = app_data_root() {
+        let dir = root.join("cloud-backend");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("launcher.log");
+        let line = format!("{} {}\n", chrono::Local::now().to_rfc3339(), message);
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .and_then(|mut file| {
+                use std::io::Write;
+                file.write_all(line.as_bytes())
+            });
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn is_backend_port_listening() -> bool {
+    use std::net::{SocketAddr, TcpStream};
+    let addr = SocketAddr::from(([127, 0, 0, 1], 8788));
+    TcpStream::connect_timeout(&addr, Duration::from_millis(250)).is_ok()
+}
+
+#[cfg(target_os = "windows")]
+fn ensure_local_backend_started() {
+    if is_backend_port_listening() {
+        return;
+    }
+
+    let exe = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(e) => {
+            tracing::warn!("Failed to resolve current exe for backend bootstrap: {}", e);
+            return;
+        }
+    };
+    let Some(install_dir) = exe.parent() else {
+        tracing::warn!("Failed to resolve install dir for backend bootstrap");
+        return;
+    };
+    let node = install_dir
+        .join("resources")
+        .join("node-runtime")
+        .join("node.exe");
+    let backend_root = install_dir.join("resources").join("backend");
+    let backend_script = backend_root.join("server.mjs");
+    if !node.exists() || !backend_script.exists() {
+        tracing::warn!(
+            "Backend bootstrap skipped, missing node or server script: node={}, script={}",
+            node.display(),
+            backend_script.display()
+        );
+        return;
+    }
+
+    let Some(app_root) = app_data_root() else {
+        tracing::warn!("Backend bootstrap skipped, APPDATA is unavailable");
+        return;
+    };
+    let backend_log_dir = app_root.join("cloud-backend");
+    let _ = std::fs::create_dir_all(&backend_log_dir);
+    let stdout = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(backend_log_dir.join("server.stdout.log"))
+        .ok()
+        .map(Stdio::from)
+        .unwrap_or_else(Stdio::null);
+    let stderr = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(backend_log_dir.join("server.stderr.log"))
+        .ok()
+        .map(Stdio::from)
+        .unwrap_or_else(Stdio::null);
+
+    append_launcher_log("Backend 8788 was not running; app bootstrap is starting it.");
+    let mut command = Command::new(node);
+    command
+        .arg(backend_script)
+        .current_dir(backend_root)
+        .env("NO_PROXY", "127.0.0.1,localhost,::1")
+        .env("no_proxy", "127.0.0.1,localhost,::1")
+        .env("STT_DEFAULT_PROVIDER", "cloud-opus")
+        .env("CLOUD_STT_UPSTREAM_PROVIDER", "volcengine-flash")
+        .env(
+            "STT_BENCHMARK_PROVIDERS",
+            "local-whisper,volcengine-flash,openai-whisper,groq-whisper,glm-asr,siliconflow,cloud-opus",
+        )
+        .env("STT_ENABLE_REPLAY_BENCHMARK", "1")
+        .env("VOICE_SLATE_BACKEND_HOST", "127.0.0.1")
+        .env("VOICE_SLATE_BACKEND_PORT", "8788")
+        .env("VOICE_SLATE_BACKEND_URL", "http://127.0.0.1:8788")
+        .env("VOICE_SLATE_BACKEND_DATA_DIR", backend_log_dir)
+        .stdout(stdout)
+        .stderr(stderr);
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+
+    if let Err(e) = command.spawn() {
+        tracing::error!("Failed to start backend 8788 from app bootstrap: {}", e);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn ensure_local_backend_started() {}
 
 /// Cached hotkey mode to avoid loading config from disk on every keypress.
 /// Updated whenever config is saved.
@@ -348,7 +504,8 @@ async fn test_stt_connection(
             Ok(resp.status().is_success())
         }
         "volcengine-flash" => {
-            let wav = stt::whisper_compat::WhisperCompatProvider::build_wav(&vec![0u8; 3200], 16000);
+            let wav =
+                stt::whisper_compat::WhisperCompatProvider::build_wav(&vec![0u8; 3200], 16000);
             let body = serde_json::json!({
                 "user": { "uid": "voiceslate-local" },
                 "audio": { "data": STANDARD.encode(wav) },
@@ -375,7 +532,8 @@ async fn test_stt_connection(
             Ok(resp.status().is_success())
         }
         "volcengine-standard" => {
-            let wav = stt::whisper_compat::WhisperCompatProvider::build_wav(&vec![0u8; 3200], 16000);
+            let wav =
+                stt::whisper_compat::WhisperCompatProvider::build_wav(&vec![0u8; 3200], 16000);
             let body = serde_json::json!({
                 "user": { "uid": "voiceslate-local" },
                 "audio": { "data": STANDARD.encode(wav), "format": "wav" },
@@ -695,7 +853,8 @@ async fn bench_stt_connection(
             Ok(elapsed)
         }
         "volcengine-flash" => {
-            let wav = stt::whisper_compat::WhisperCompatProvider::build_wav(&vec![0u8; 3200], 16000);
+            let wav =
+                stt::whisper_compat::WhisperCompatProvider::build_wav(&vec![0u8; 3200], 16000);
             let body = serde_json::json!({
                 "user": { "uid": "voiceslate-local" },
                 "audio": { "data": STANDARD.encode(wav) },
@@ -727,7 +886,8 @@ async fn bench_stt_connection(
             Ok(elapsed)
         }
         "volcengine-standard" => {
-            let wav = stt::whisper_compat::WhisperCompatProvider::build_wav(&vec![0u8; 3200], 16000);
+            let wav =
+                stt::whisper_compat::WhisperCompatProvider::build_wav(&vec![0u8; 3200], 16000);
             let body = serde_json::json!({
                 "user": { "uid": "voiceslate-local" },
                 "audio": { "data": STANDARD.encode(wav), "format": "wav" },
@@ -1242,7 +1402,7 @@ unsafe extern "system" fn windows_alt_hook_proc(
 ) -> isize {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_RMENU;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, KBDLLHOOKSTRUCT, HC_ACTION, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN,
+        CallNextHookEx, HC_ACTION, KBDLLHOOKSTRUCT, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN,
         WM_SYSKEYUP,
     };
 
@@ -1293,8 +1453,8 @@ fn spawn_windows_alt_hook(app_handle: tauri::AppHandle) {
         use windows_sys::Win32::Foundation::{LPARAM, WPARAM};
         use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
         use windows_sys::Win32::UI::WindowsAndMessaging::{
-            DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
-            HHOOK, MSG, WH_KEYBOARD_LL,
+            DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
+            UnhookWindowsHookEx, HHOOK, MSG, WH_KEYBOARD_LL,
         };
 
         unsafe {
@@ -1306,6 +1466,7 @@ fn spawn_windows_alt_hook(app_handle: tauri::AppHandle) {
                 tracing::error!("Failed to install Windows low-level AltRight hook");
                 return;
             }
+            tracing::info!("Installed Windows low-level AltRight hook");
 
             let mut msg = MSG {
                 hwnd: std::ptr::null_mut(),
@@ -1536,15 +1697,7 @@ mod tests {
     }
 }
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::from_default_env().add_directive(
-                "voiceslate=debug"
-                    .parse()
-                    .expect("static directive is valid"),
-            ),
-        )
-        .init();
+    init_logging();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_sql::Builder::default().build())
@@ -1570,6 +1723,8 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
+            ensure_local_backend_started();
+
             // Open devtools only when the "devtools" feature is explicitly enabled
             #[cfg(feature = "devtools")]
             {

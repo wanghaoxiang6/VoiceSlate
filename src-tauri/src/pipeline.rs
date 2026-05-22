@@ -118,7 +118,9 @@ fn apply_stt_corrections(text: &str, config: &storage::AppConfig) -> String {
         .stt_corrections
         .iter()
         .filter(|item| item.enabled && !item.from.trim().is_empty())
-        .fold(text.to_string(), |current, item| current.replace(&item.from, &item.to))
+        .fold(text.to_string(), |current, item| {
+            current.replace(&item.from, &item.to)
+        })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -225,6 +227,7 @@ pub struct PipelineHandle {
     audio_handle: Arc<Mutex<Option<AudioCaptureHandle>>>,
     audio_volume: Arc<Mutex<f32>>,
     accumulated_text: Arc<Mutex<String>>,
+    stt_last_error: Arc<Mutex<Option<String>>>,
     stt_done: Arc<Notify>,
     abort_flag: Arc<AtomicBool>,
     preloaded_config: Arc<Mutex<Option<storage::AppConfig>>>,
@@ -248,6 +251,7 @@ impl PipelineHandle {
             audio_handle: Arc::new(Mutex::new(None)),
             audio_volume: Arc::new(Mutex::new(0.0)),
             accumulated_text: Arc::new(Mutex::new(String::new())),
+            stt_last_error: Arc::new(Mutex::new(None)),
             stt_done: Arc::new(Notify::new()),
             abort_flag: Arc::new(AtomicBool::new(false)),
             preloaded_config: Arc::new(Mutex::new(None)),
@@ -288,7 +292,10 @@ impl PipelineHandle {
     /// Stops audio capture, forces state to Idle, and signals any
     /// ongoing stop() to exit early via abort_flag.
     pub fn abort(&self) {
-        tracing::info!("Pipeline abort requested (current state: {:?})", self.current_state());
+        tracing::info!(
+            "Pipeline abort requested (current state: {:?})",
+            self.current_state()
+        );
 
         // Set abort flag so any running stop() exits early
         self.abort_flag.store(true, Ordering::SeqCst);
@@ -306,7 +313,14 @@ impl PipelineHandle {
         self.stt_done.notify_one();
 
         // Clear accumulated text
-        self.accumulated_text.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.accumulated_text
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        *self
+            .stt_last_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
 
         // Force state to Idle — emits pipeline:state event to sync frontend
         self.set_state(PipelineState::Idle);
@@ -410,6 +424,10 @@ impl PipelineHandle {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
+        *self
+            .stt_last_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
 
         // P0-2: Load config BEFORE starting audio capture — fail fast on missing API key
         let config_data = self.load_config().await;
@@ -517,10 +535,9 @@ impl PipelineHandle {
             Ok(result) => result,
             Err(e) => {
                 tracing::error!("Audio capture failed: {}", e);
-                let _ = self.app_handle.emit(
-                    "pipeline:error",
-                    format!("Audio capture failed: {e}"),
-                );
+                let _ = self
+                    .app_handle
+                    .emit("pipeline:error", format!("Audio capture failed: {e}"));
                 *self
                     .preloaded_config
                     .lock()
@@ -587,6 +604,7 @@ impl PipelineHandle {
         // STT streaming task — provider is already connected
         let app_handle = self.app_handle.clone();
         let accumulated = self.accumulated_text.clone();
+        let stt_last_error = self.stt_last_error.clone();
         let stt_done = self.stt_done.clone();
 
         tokio::spawn(async move {
@@ -610,8 +628,10 @@ impl PipelineHandle {
                                     }
                                     Ok(None) => {}
                                     Err(e) => {
+                                        let message = format!("STT error: {e}");
                                         tracing::error!("STT disconnect error: {}", e);
-                                        let _ = app_handle.emit("pipeline:error", format!("STT error: {e}"));
+                                        *stt_last_error.lock().unwrap_or_else(|err| err.into_inner()) = Some(message.clone());
+                                        let _ = app_handle.emit("pipeline:error", message);
                                     }
                                 }
                                 break;
@@ -633,7 +653,9 @@ impl PipelineHandle {
                             }
                             Ok(Some(TranscriptEvent::Error { message })) => {
                                 tracing::error!("STT error: {}", message);
-                                let _ = app_handle.emit("pipeline:error", format!("STT error: {message}"));
+                                let error_message = format!("STT error: {message}");
+                                *stt_last_error.lock().unwrap_or_else(|err| err.into_inner()) = Some(error_message.clone());
+                                let _ = app_handle.emit("pipeline:error", error_message);
                                 // Break out of the loop — STT has failed, no point
                                 // continuing. Without break, the loop keeps running
                                 // and the pipeline stays stuck in Recording forever.
@@ -641,6 +663,8 @@ impl PipelineHandle {
                             }
                             Err(e) => {
                                 tracing::error!("STT recv error: {}", e);
+                                *stt_last_error.lock().unwrap_or_else(|err| err.into_inner()) =
+                                    Some(format!("STT recv error: {e}"));
                                 break;
                             }
                             _ => {}
@@ -827,17 +851,26 @@ impl PipelineHandle {
             .unwrap_or_else(|e| e.into_inner())
             .trim()
             .to_string();
+        let stt_error = self
+            .stt_last_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
         let corrected_stt_text = apply_stt_corrections(&raw_text, &config);
 
         if raw_text.is_empty() {
-            let message = match duration_ms {
-                Some(ms) if ms > 900 => {
-                    "Speech was recorded, but transcription came back empty. Please try again, or switch to Volcengine Standard in Settings."
+            let message = if let Some(error) = stt_error {
+                error
+            } else {
+                match duration_ms {
+                    Some(ms) if ms > 900 => {
+                        "Speech was recorded, but transcription came back empty. Please try again, or switch to Volcengine Standard in Settings.".to_string()
+                    }
+                    Some(ms) if ms > 0 => {
+                        "Recording was too short or too quiet. Please hold the hotkey a little longer and speak clearly.".to_string()
+                    }
+                    _ => "No speech detected. Please try again.".to_string(),
                 }
-                Some(ms) if ms > 0 => {
-                    "Recording was too short or too quiet. Please hold the hotkey a little longer and speak clearly."
-                }
-                _ => "No speech detected. Please try again.",
             };
             let _ = self.app_handle.emit("pipeline:error", message);
             self.set_state(PipelineState::Idle);
@@ -902,8 +935,7 @@ impl PipelineHandle {
                     final_text = response.polished_text;
                     llm_elapsed = llm_start.elapsed();
 
-                    if let Err(e) = self.output_text(&final_text, &app_ctx, &config).await
-                    {
+                    if let Err(e) = self.output_text(&final_text, &app_ctx, &config).await {
                         tracing::error!("Output failed: {}", e);
                         let _ = self
                             .app_handle
@@ -923,8 +955,7 @@ impl PipelineHandle {
                     let _ = self
                         .app_handle
                         .emit("pipeline:error", format!("LLM polishing failed: {e}"));
-                    if let Err(e) = self.output_text(&final_text, &app_ctx, &config).await
-                    {
+                    if let Err(e) = self.output_text(&final_text, &app_ctx, &config).await {
                         tracing::error!("Output failed: {}", e);
                         let _ = self
                             .app_handle
@@ -940,8 +971,7 @@ impl PipelineHandle {
         } else {
             llm_elapsed = std::time::Duration::ZERO;
             final_text = corrected_stt_text.clone();
-            if let Err(e) = self.output_text(&final_text, &app_ctx, &config).await
-            {
+            if let Err(e) = self.output_text(&final_text, &app_ctx, &config).await {
                 tracing::error!("Output failed: {}", e);
                 let _ = self
                     .app_handle
@@ -1054,8 +1084,7 @@ impl PipelineHandle {
             }
             "cloud-opus" | "local-whisper" => "http://127.0.0.1:8788/api/proxy/stt".to_string(),
             "volcengine-flash" => {
-                "https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash"
-                    .to_string()
+                "https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash".to_string()
             }
             "volcengine-standard" => {
                 "https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit".to_string()
@@ -1148,8 +1177,14 @@ mod tests {
             classify_quick_action("screenshot"),
             Some(QuickAction::Screenshot)
         );
-        assert_eq!(classify_quick_action("截图。"), Some(QuickAction::Screenshot));
+        assert_eq!(
+            classify_quick_action("截图。"),
+            Some(QuickAction::Screenshot)
+        );
         assert_eq!(classify_quick_action("我刚才说的是截图这两个字"), None);
-        assert_eq!(classify_quick_action("这句话里包含 screenshot 这个词"), None);
+        assert_eq!(
+            classify_quick_action("这句话里包含 screenshot 这个词"),
+            None
+        );
     }
 }

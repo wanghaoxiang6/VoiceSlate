@@ -46,7 +46,10 @@ impl TextOutput for KeyboardOutput {
                 return Ok(());
             }
 
-            tracing::info!("Keyboard output using simulated typing: chars={}", char_count);
+            tracing::info!(
+                "Keyboard output using simulated typing: chars={}",
+                char_count
+            );
             let mut enigo = Enigo::new(&Settings::default())
                 .map_err(|e| anyhow::anyhow!("Failed to create Enigo: {:?}", e))?;
 

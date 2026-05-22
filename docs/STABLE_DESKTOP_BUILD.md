@@ -84,6 +84,7 @@ The generated installer is built from the current local runtime using:
 - `npm test -- --run`
 - `cargo test --manifest-path src-tauri\Cargo.toml`
 - local backend health: `http://127.0.0.1:8788/health`
-- local command STT health: `http://127.0.0.1:8178/health`
+- local command STT health: `http://127.0.0.1:8178/health` is optional and must not block `cloud-opus`
 - provider registry returns `default_provider=cloud-opus`
 - a 10+ second sample succeeds through `cloud-opus`
+- release app writes `%APPDATA%\com.voiceslate.app\logs\voiceslate.log.YYYY-MM-DD`

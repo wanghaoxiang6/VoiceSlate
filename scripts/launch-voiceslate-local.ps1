@@ -258,7 +258,11 @@ if ($sttProvider -eq "local-whisper" -or $sttProvider -eq "cloud-opus") {
     }
   }
 
-  if (-not (Test-LocalSttHealth)) {
+  $shouldStartLocalStt = $sttProvider -eq "local-whisper" -or $env:STT_ENABLE_LOCAL_COMMAND_PRECHECK -eq "1"
+
+  if ((-not $shouldStartLocalStt) -and (-not (Test-LocalSttHealth))) {
+    Write-LauncherLog "Skipping optional local command STT 8178; cloud-opus does not require it."
+  } elseif (-not (Test-LocalSttHealth)) {
     if (-not (Test-Path $pythonExe)) {
       Write-LauncherLog "Local STT Python runtime was not found: $pythonExe"
     } elseif (-not (Test-Path $serverScript)) {

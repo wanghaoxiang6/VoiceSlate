@@ -43,6 +43,7 @@ MUST：
 - 发布前确认桌面安装包默认 `stt_api_key` 和 `llm_api_key` 为空。
 - 发布前确认 `8788` 正常监听；`8178` 如果因本地 Whisper/运行库崩溃不可用，launcher 必须记录日志并继续启动主程序。
 - `8178` 是可选短命令预检服务，启动等待不得超过数秒，不能拖慢开机后主程序可用时间。
+- 主程序即使被误从裸 `voiceslate.exe` 启动，也必须尝试自启 `8788` backend，避免绕过 launcher 后直接失效。
 
 MUST NOT：
 
@@ -59,7 +60,7 @@ MUST：
 - `cloud-opus` 通过本地 backend `8788` 进入 provider registry。
 - 当前稳定默认上游为 `volcengine-flash`，不得在缺少环境变量时隐式漂移到 `glm-asr`、OpenAI、Groq 或其他 provider。
 - launcher 启动时必须检查 `GET /api/stt/providers?provider=cloud-opus`，如果 `upstream_provider` 不是 `volcengine-flash`，必须重启 backend。
-- `local-command` 只用于短命令预检。
+- `local-command` 只允许作为可选短命令预检；默认不得依赖 `8178`，因为短命令最终还必须能通过 `cloud-opus` + Rust 精确意图路由触发。
 - `local-whisper`、火山、OpenAI、Groq、GLM、SiliconFlow 等 provider 必须保留为可切换/可对比后端。
 - STT timing 必须记录 `request_id / provider / upstream_provider / audio_seconds / codec / command_precheck_ms / encode_ms / upstream_ms / parse_ms / latency_ms / ok / error`。
 
@@ -213,6 +214,8 @@ node --check resources\backend\server.mjs
 - 修改 local STT server 后，必须同步复制到 `%LOCALAPPDATA%\VoiceSlate\local-stt\local_stt_server.py`。
 - 重新生成桌面安装包：`%USERPROFILE%\Desktop\VoiceSlate-Local-STT-Setup.exe`。
 - 发布前确认安装包默认 settings 中 API Key 长度为 0。
+- 发布版必须写当天主程序日志：`%APPDATA%\com.voiceslate.app\logs\voiceslate.log.YYYY-MM-DD`。
+- launcher 默认不得启动 `8178`；只有 `stt_provider=local-whisper` 或显式 `STT_ENABLE_LOCAL_COMMAND_PRECHECK=1` 时才允许启动，避免 Python/faster-whisper 崩溃污染稳定链路。
 
 MUST NOT：
 
@@ -231,7 +234,7 @@ MUST NOT：
 - 10 秒普通中文听写能输入当前窗口。
 - 历史记录与当前窗口输出一致。
 - 胶囊一直可见。
-- 重启 VoiceSlate 后 `8788` 和 `8178` 自动可用。
+- 重启 VoiceSlate 后 `8788` 自动可用；`8178` 不可用时不得影响普通听写、截图短命令和主程序启动。
 - 桌面安装包存在且时间为最新。
 
 ## 11. 变更入口

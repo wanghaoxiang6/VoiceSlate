@@ -57,6 +57,8 @@ MUST：
 
 - 普通长听写默认走 `cloud-opus`。
 - `cloud-opus` 通过本地 backend `8788` 进入 provider registry。
+- 当前稳定默认上游为 `volcengine-flash`，不得在缺少环境变量时隐式漂移到 `glm-asr`、OpenAI、Groq 或其他 provider。
+- launcher 启动时必须检查 `GET /api/stt/providers?provider=cloud-opus`，如果 `upstream_provider` 不是 `volcengine-flash`，必须重启 backend。
 - `local-command` 只用于短命令预检。
 - `local-whisper`、火山、OpenAI、Groq、GLM、SiliconFlow 等 provider 必须保留为可切换/可对比后端。
 - STT timing 必须记录 `request_id / provider / upstream_provider / audio_seconds / codec / command_precheck_ms / encode_ms / upstream_ms / parse_ms / latency_ms / ok / error`。
@@ -65,6 +67,7 @@ MUST NOT：
 
 - 不得把主程序重新改回直接调用某一家 provider。
 - 不得因为某次云端失败就永久切换默认 provider。
+- 不得让 `cloud-opus` 在启动环境缺失时默认回落到需要另一套 token 的 provider。
 - 不得把 `speech was recorded` 全部归因到 API Key 或麦克风。
 
 ## 3. 短命令合同

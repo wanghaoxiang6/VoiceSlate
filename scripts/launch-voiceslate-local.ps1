@@ -186,6 +186,33 @@ function Test-BackendHealth {
   }
 }
 
+function Get-BackendCloudUpstream {
+  try {
+    $response = Invoke-RestMethod -Uri "http://127.0.0.1:8788/api/stt/providers?provider=cloud-opus" -Method Get -TimeoutSec 2
+    return [string]$response.upstream_provider
+  } catch {
+    return ""
+  }
+}
+
+function Stop-BackendIfWrongUpstream {
+  $upstream = Get-BackendCloudUpstream
+  if ([string]::IsNullOrWhiteSpace($upstream) -or $upstream -eq "volcengine-flash") {
+    return
+  }
+
+  Write-LauncherLog "Restarting backend 8788 because cloud-opus upstream is '$upstream', expected 'volcengine-flash'."
+  try {
+    $connections = Get-NetTCPConnection -LocalPort 8788 -State Listen -ErrorAction SilentlyContinue
+    foreach ($connection in $connections) {
+      Stop-Process -Id $connection.OwningProcess -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Seconds 1
+  } catch {
+    Write-LauncherLog "Failed to stop backend with wrong upstream: $($_.Exception.Message)"
+  }
+}
+
 function Get-SttProvider {
   foreach ($settingsPath in $settingsCandidates) {
     if (-not (Test-Path $settingsPath)) {
@@ -210,6 +237,8 @@ if ($sttProvider -eq "local-whisper" -or $sttProvider -eq "cloud-opus") {
   if (-not (Test-Path $backendLogDir)) {
     New-Item -ItemType Directory -Path $backendLogDir -Force | Out-Null
   }
+
+  Stop-BackendIfWrongUpstream
 
   if ((Test-Path $backendNode) -and (Test-Path $backendScript) -and (-not (Test-BackendHealth))) {
     Write-LauncherLog "Starting backend 8788."

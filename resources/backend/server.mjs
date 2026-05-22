@@ -291,8 +291,8 @@ function resolveSttProvider(providerId, formFields = {}) {
       normalizeProviderId(process.env.CLOUD_STT_UPSTREAM_PROVIDER) ||
       normalizeProviderId(process.env.STT_CLOUD_UPSTREAM_PROVIDER) ||
       normalizeProviderId(process.env.CLOUD_STT_PROVIDER) ||
-      "glm-asr";
-    const resolved = resolveSttProvider(upstream === "cloud-opus" ? "glm-asr" : upstream, formFields);
+      "volcengine-flash";
+    const resolved = resolveSttProvider(upstream === "cloud-opus" ? "volcengine-flash" : upstream, formFields);
     return {
       ...resolved,
       id: "cloud-opus",

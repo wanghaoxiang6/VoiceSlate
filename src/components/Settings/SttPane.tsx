@@ -11,6 +11,7 @@ import {
   type SttCorrectionSuggestion,
 } from '../../lib/tauri'
 import { FormField } from './shared/FormField'
+import { Toggle } from './shared/Toggle'
 import { CheckCircle2, XCircle, Loader2, Crown, Plus, Ban } from 'lucide-react'
 import { toast } from '../Toast'
 
@@ -209,6 +210,82 @@ export function SttPane() {
       </FormField>
 
       <div className="border border-border rounded-[10px] px-3 py-3 space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[13px] font-medium text-text-primary">
+              {t('settings.voiceProfileSlot')}
+            </div>
+            <p className="text-[11px] text-text-tertiary mt-1">
+              {t('settings.voiceProfileSlotDesc')}
+            </p>
+          </div>
+          <Toggle
+            checked={config.voice_profile_enabled}
+            onChange={(checked) => updateConfig({ voice_profile_enabled: checked })}
+          />
+        </div>
+
+        {config.voice_profile_enabled && (
+          <div className="space-y-3 pt-1">
+            <FormField label={t('settings.voiceProfileInboxDir')}>
+              <input
+                type="text"
+                value={config.voice_profile_inbox_dir}
+                onChange={(e) => updateConfig({ voice_profile_inbox_dir: e.target.value })}
+                placeholder={t('settings.voiceProfileInboxPlaceholder')}
+                className="w-full px-3 py-2.5 bg-bg-secondary border border-border rounded-[10px] text-[13px] text-text-primary outline-none focus:border-border-focus transition-colors"
+              />
+              <p className="text-[11px] text-text-tertiary mt-1.5">
+                {t('settings.voiceProfileInboxHint')}
+              </p>
+            </FormField>
+
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label={t('settings.voiceProfileMinDuration')}>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={30}
+                    step={0.5}
+                    value={config.voice_profile_min_duration_seconds}
+                    onChange={(e) =>
+                      updateConfig({
+                        voice_profile_min_duration_seconds: Number(e.target.value) || 3,
+                      })
+                    }
+                    className="w-full px-3 py-2.5 bg-bg-secondary border border-border rounded-[10px] text-[13px] text-text-primary outline-none focus:border-border-focus transition-colors"
+                  />
+                  <span className="text-[12px] text-text-tertiary">s</span>
+                </div>
+              </FormField>
+
+              <FormField label={t('settings.voiceProfileMinQuality')}>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min={0.1}
+                    max={1}
+                    step={0.05}
+                    value={config.voice_profile_min_quality_score}
+                    onChange={(e) =>
+                      updateConfig({
+                        voice_profile_min_quality_score: Number(e.target.value),
+                      })
+                    }
+                    className="flex-1 accent-accent"
+                  />
+                  <span className="text-[12px] text-text-secondary font-mono w-9 text-right">
+                    {config.voice_profile_min_quality_score.toFixed(2)}
+                  </span>
+                </div>
+              </FormField>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="border border-border rounded-[10px] px-3 py-3 space-y-3">
         <div className="flex items-center justify-between gap-3">
           <div>
             <div className="text-[13px] font-medium text-text-primary">Correction suggestions</div>
@@ -227,7 +304,8 @@ export function SttPane() {
 
         {suggestions.length === 0 ? (
           <p className="text-[12px] text-text-secondary">
-            No pending suggestions. Correct a history item first; repeated edits will be collected here.
+            No pending suggestions. Correct a history item first; repeated edits will be collected
+            here.
           </p>
         ) : (
           <div className="space-y-2">

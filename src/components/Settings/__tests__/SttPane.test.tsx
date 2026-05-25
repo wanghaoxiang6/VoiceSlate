@@ -23,6 +23,13 @@ vi.mock('react-i18next', () => ({
         'settings.sttSignInHint': 'Sign in to use cloud STT',
         'settings.sttUpgradeHint': 'Upgrade to Pro to use cloud STT',
         'settings.sttProActive': 'Cloud STT active',
+        'settings.voiceProfileSlot': 'Voice profile sample collection',
+        'settings.voiceProfileSlotDesc': 'Off by default',
+        'settings.voiceProfileInboxDir': 'Voice profile inbox folder',
+        'settings.voiceProfileInboxPlaceholder': 'Leave empty to use the default local inbox',
+        'settings.voiceProfileInboxHint': 'Writes local WAV and metadata only',
+        'settings.voiceProfileMinDuration': 'Min sample',
+        'settings.voiceProfileMinQuality': 'Quality threshold',
       }
       return translations[key] || key
     },
@@ -37,6 +44,10 @@ const mockAppStore = {
     stt_language: 'en',
     stt_correction_enabled: false,
     stt_corrections: [],
+    voice_profile_enabled: false,
+    voice_profile_inbox_dir: '',
+    voice_profile_min_duration_seconds: 3,
+    voice_profile_min_quality_score: 0.65,
   },
   updateConfig: vi.fn(),
   setSavedConfig: vi.fn(),
@@ -78,6 +89,10 @@ describe('SttPane', () => {
       stt_language: 'en',
       stt_correction_enabled: false,
       stt_corrections: [],
+      voice_profile_enabled: false,
+      voice_profile_inbox_dir: '',
+      voice_profile_min_duration_seconds: 3,
+      voice_profile_min_quality_score: 0.65,
     }
     mockAppStore.sttTestStatus = 'idle'
     mockAppStore.sttLatencyMs = null
@@ -275,6 +290,38 @@ describe('SttPane', () => {
       fireEvent.change(languageSelect, { target: { value: 'zh' } })
 
       expect(mockAppStore.updateConfig).toHaveBeenCalledWith({ stt_language: 'zh' })
+    })
+  })
+
+  describe('Voice profile slot', () => {
+    it('renders the voice profile switch off by default', () => {
+      render(<SttPane />)
+      expect(screen.getByText('Voice profile sample collection')).toBeInTheDocument()
+      const switches = screen.getAllByRole('switch')
+      expect(switches[0]).toHaveAttribute('aria-checked', 'false')
+      expect(screen.queryByPlaceholderText('Leave empty to use the default local inbox')).toBeNull()
+    })
+
+    it('enables voice profile collection when the switch is clicked', () => {
+      render(<SttPane />)
+      const switches = screen.getAllByRole('switch')
+
+      fireEvent.click(switches[0])
+
+      expect(mockAppStore.updateConfig).toHaveBeenCalledWith({
+        voice_profile_enabled: true,
+      })
+    })
+
+    it('shows advanced voice profile controls when enabled', () => {
+      mockAppStore.config.voice_profile_enabled = true
+      render(<SttPane />)
+
+      expect(
+        screen.getByPlaceholderText('Leave empty to use the default local inbox'),
+      ).toBeInTheDocument()
+      expect(screen.getByText('Min sample')).toBeInTheDocument()
+      expect(screen.getByText('Quality threshold')).toBeInTheDocument()
     })
   })
 

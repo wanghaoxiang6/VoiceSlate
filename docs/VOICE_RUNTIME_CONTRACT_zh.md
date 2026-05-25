@@ -71,7 +71,22 @@ MUST NOT：
 - 不得让 `cloud-opus` 在启动环境缺失时默认回落到需要另一套 token 的 provider。
 - 不得把 `speech was recorded` 全部归因到 API Key 或麦克风。
 
-## 3. 短命令合同
+## 3. Voice Profile Slot 旁路合同
+
+MUST：
+
+- 声纹/情绪样本采集默认关闭，配置为 `voice_profile_enabled=false`。
+- 启用后也只能在听写完成后异步写入本地 inbox，不能阻塞 STT、LLM、截图、热键和输出。
+- VoiceSlate 只投递 WAV + metadata 任务；speaker embedding、情绪识别、声音克隆必须由独立项目处理。
+- 详见 `docs/VOICE_PROFILE_SLOT_CONTRACT_zh.md`。
+
+MUST NOT：
+
+- 不得在 VoiceSlate 主进程中加载声纹识别或情绪识别模型。
+- 不得让声纹库失败影响当前 VoiceSlate 使用。
+- 不得默认保存录音副本或上传音频。
+
+## 4. 短命令合同
 
 短命令包括：
 

@@ -95,6 +95,10 @@ export interface AppConfig {
   max_recording_seconds: number
   ui_language: string
   capsule_auto_hide: boolean
+  voice_profile_enabled: boolean
+  voice_profile_inbox_dir: string
+  voice_profile_min_duration_seconds: number
+  voice_profile_min_quality_score: number
 }
 
 export type TestStatus = 'idle' | 'testing' | 'success' | 'error'
@@ -212,6 +216,10 @@ const defaultConfig: AppConfig = {
   max_recording_seconds: 30,
   ui_language: 'zh',
   capsule_auto_hide: false,
+  voice_profile_enabled: false,
+  voice_profile_inbox_dir: '',
+  voice_profile_min_duration_seconds: 3,
+  voice_profile_min_quality_score: 0.65,
 }
 
 export const useAppStore = create<AppState>((set) => ({

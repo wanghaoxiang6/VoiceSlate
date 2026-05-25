@@ -5,6 +5,7 @@ pub mod output;
 pub mod pipeline;
 pub mod storage;
 pub mod stt;
+pub mod voice_profile;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;

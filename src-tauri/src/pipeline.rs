@@ -228,6 +228,7 @@ pub struct PipelineHandle {
     audio_volume: Arc<Mutex<f32>>,
     accumulated_text: Arc<Mutex<String>>,
     stt_last_error: Arc<Mutex<Option<String>>>,
+    voice_profile_audio: Arc<Mutex<Option<Vec<u8>>>>,
     stt_done: Arc<Notify>,
     abort_flag: Arc<AtomicBool>,
     preloaded_config: Arc<Mutex<Option<storage::AppConfig>>>,
@@ -252,6 +253,7 @@ impl PipelineHandle {
             audio_volume: Arc::new(Mutex::new(0.0)),
             accumulated_text: Arc::new(Mutex::new(String::new())),
             stt_last_error: Arc::new(Mutex::new(None)),
+            voice_profile_audio: Arc::new(Mutex::new(None)),
             stt_done: Arc::new(Notify::new()),
             abort_flag: Arc::new(AtomicBool::new(false)),
             preloaded_config: Arc::new(Mutex::new(None)),
@@ -319,6 +321,10 @@ impl PipelineHandle {
             .clear();
         *self
             .stt_last_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
+        *self
+            .voice_profile_audio
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = None;
 
@@ -428,6 +434,10 @@ impl PipelineHandle {
             .stt_last_error
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = None;
+        *self
+            .voice_profile_audio
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
 
         // P0-2: Load config BEFORE starting audio capture — fail fast on missing API key
         let config_data = self.load_config().await;
@@ -455,6 +465,14 @@ impl PipelineHandle {
             config_data.stt_api_key.len(),
             config_data.stt_language
         );
+        *self
+            .voice_profile_audio
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = if config_data.voice_profile_enabled {
+            Some(Vec::new())
+        } else {
+            None
+        };
 
         // Guard: empty API key — bail before starting audio (skip for cloud provider)
         if config_data.stt_api_key.is_empty()
@@ -605,6 +623,8 @@ impl PipelineHandle {
         let app_handle = self.app_handle.clone();
         let accumulated = self.accumulated_text.clone();
         let stt_last_error = self.stt_last_error.clone();
+        let voice_profile_audio = self.voice_profile_audio.clone();
+        let collect_voice_profile_audio = config_data.voice_profile_enabled;
         let stt_done = self.stt_done.clone();
 
         tokio::spawn(async move {
@@ -614,6 +634,15 @@ impl PipelineHandle {
                     chunk = audio_rx.recv() => {
                         match chunk {
                             Some(data) => {
+                                if collect_voice_profile_audio {
+                                    if let Some(buffer) = voice_profile_audio
+                                        .lock()
+                                        .unwrap_or_else(|err| err.into_inner())
+                                        .as_mut()
+                                    {
+                                        buffer.extend_from_slice(&data);
+                                    }
+                                }
                                 let _ = provider.send_audio(&data).await;
                             }
                             None => {
@@ -873,6 +902,10 @@ impl PipelineHandle {
                 }
             };
             let _ = self.app_handle.emit("pipeline:error", message);
+            *self
+                .voice_profile_audio
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = None;
             self.set_state(PipelineState::Idle);
             return Ok(());
         }
@@ -891,6 +924,10 @@ impl PipelineHandle {
                         .emit("pipeline:error", format!("Quick action failed: {e}"));
                 }
             }
+            *self
+                .voice_profile_audio
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = None;
             self.set_state(PipelineState::Idle);
             return Ok(());
         }
@@ -1005,10 +1042,10 @@ impl PipelineHandle {
         let entry = storage::HistoryEntry {
             id: 0, // auto-increment
             created_at: now,
-            app_name: app_ctx.app_name,
+            app_name: app_ctx.app_name.clone(),
             app_type: format!("{:?}", app_ctx.app_type),
-            raw_text,
-            polished_text: final_text,
+            raw_text: raw_text.clone(),
+            polished_text: final_text.clone(),
             corrected_text: None,
             corrected_at: None,
             language: None,
@@ -1023,6 +1060,34 @@ impl PipelineHandle {
             .await
         {
             tracing::error!("Failed to save history: {}", e);
+        }
+
+        if config.voice_profile_enabled {
+            let pcm = self
+                .voice_profile_audio
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take();
+            if let Some(pcm) = pcm {
+                let voice_config = config.clone();
+                let candidate = crate::voice_profile::VoiceProfileCandidate {
+                    pcm,
+                    raw_text,
+                    final_text: final_text.clone(),
+                    duration_ms,
+                    stt_provider: config.stt_provider.clone(),
+                    llm_provider: config.llm_provider.clone(),
+                    app_name: app_ctx.app_name,
+                    app_type: format!("{:?}", app_ctx.app_type),
+                };
+                tokio::task::spawn_blocking(move || {
+                    if let Err(e) =
+                        crate::voice_profile::enqueue_candidate(&voice_config, candidate)
+                    {
+                        tracing::warn!("Voice profile enqueue failed: {}", e);
+                    }
+                });
+            }
         }
 
         self.set_state(PipelineState::Idle);

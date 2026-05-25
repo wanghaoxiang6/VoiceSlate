@@ -31,6 +31,10 @@ pub struct AppConfig {
     pub max_recording_seconds: u32,
     pub ui_language: String,
     pub capsule_auto_hide: bool,
+    pub voice_profile_enabled: bool,
+    pub voice_profile_inbox_dir: String,
+    pub voice_profile_min_duration_seconds: f32,
+    pub voice_profile_min_quality_score: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -83,6 +87,10 @@ impl Default for AppConfig {
             max_recording_seconds: 30,
             ui_language: "zh".to_string(),
             capsule_auto_hide: false,
+            voice_profile_enabled: false,
+            voice_profile_inbox_dir: String::new(),
+            voice_profile_min_duration_seconds: 3.0,
+            voice_profile_min_quality_score: 0.65,
         }
     }
 }

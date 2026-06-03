@@ -123,6 +123,14 @@ fn apply_stt_corrections(text: &str, config: &storage::AppConfig) -> String {
         })
 }
 
+fn choose_output_text(polished_text: String, fallback_stt_text: &str) -> String {
+    if polished_text.trim().is_empty() {
+        fallback_stt_text.to_string()
+    } else {
+        polished_text
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum QuickAction {
     Screenshot,
@@ -969,8 +977,15 @@ impl PipelineHandle {
                         tracing::info!("Pipeline aborted after LLM polish, skipping output");
                         return Ok(());
                     }
-                    final_text = response.polished_text;
+                    final_text = choose_output_text(response.polished_text, &corrected_stt_text);
                     llm_elapsed = llm_start.elapsed();
+                    if final_text == corrected_stt_text {
+                        tracing::warn!(
+                            "LLM polish returned empty; falling back to corrected STT text: raw_chars={}, fallback_chars={}",
+                            raw_text.chars().count(),
+                            corrected_stt_text.chars().count()
+                        );
+                    }
 
                     if let Err(e) = self.output_text(&final_text, &app_ctx, &config).await {
                         tracing::error!("Output failed: {}", e);
@@ -985,8 +1000,8 @@ impl PipelineHandle {
                         tracing::info!("Pipeline aborted after LLM error, skipping output");
                         return Ok(());
                     }
-                    tracing::error!("LLM polish failed: {}, outputting raw text", e);
-                    final_text = raw_text.clone();
+                    tracing::error!("LLM polish failed: {}, outputting corrected STT text", e);
+                    final_text = corrected_stt_text.clone();
                     llm_elapsed = llm_start.elapsed();
 
                     let _ = self
@@ -1199,7 +1214,7 @@ impl PipelineHandle {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_stt_corrections, classify_quick_action, QuickAction};
+    use super::{apply_stt_corrections, choose_output_text, classify_quick_action, QuickAction};
     use crate::storage::{AppConfig, SttCorrection};
 
     #[test]
@@ -1233,6 +1248,26 @@ mod tests {
         };
 
         assert_eq!(apply_stt_corrections("错词", &config), "错词");
+    }
+
+    #[test]
+    fn output_text_falls_back_when_llm_returns_empty() {
+        assert_eq!(
+            choose_output_text(String::new(), "corrected stt"),
+            "corrected stt"
+        );
+        assert_eq!(
+            choose_output_text("   \n\t".to_string(), "corrected stt"),
+            "corrected stt"
+        );
+    }
+
+    #[test]
+    fn output_text_keeps_non_empty_llm_result() {
+        assert_eq!(
+            choose_output_text("polished text".to_string(), "corrected stt"),
+            "polished text"
+        );
     }
 
     #[test]

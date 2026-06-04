@@ -425,6 +425,7 @@ impl PipelineHandle {
         let _ = self
             .app_handle
             .emit("pipeline:state", PipelineState::Recording);
+        let setup_start = std::time::Instant::now();
         // Update tray for recording state
         if let Some(tray_handle) = self.app_handle.try_state::<crate::TrayHandle>() {
             if let Ok(t) = tray_handle.tray.lock() {
@@ -453,20 +454,6 @@ impl PipelineHandle {
             .preloaded_config
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = Some(config_data.clone());
-        *self
-            .preloaded_app_ctx
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = Some(app_detector::detect_current_app());
-        let dict_words = self
-            .app_handle
-            .state::<storage::DictionaryStore>()
-            .words()
-            .await;
-        *self
-            .preloaded_dictionary
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = Some(dict_words);
-
         tracing::debug!(
             "Pipeline using config: stt_provider={}, stt_key_len={}, stt_lang={}",
             config_data.stt_provider,
@@ -509,6 +496,52 @@ impl PipelineHandle {
             return Ok(());
         }
 
+        // Start audio capture before app/dictionary lookup and STT connect.
+        // This keeps the first words spoken immediately after the hotkey press
+        // in the buffered audio stream while provider setup continues.
+        let config = AudioConfig::default();
+        let (handle, mut audio_rx) = match AudioCaptureHandle::start(config) {
+            Ok(result) => result,
+            Err(e) => {
+                tracing::error!("Audio capture failed: {}", e);
+                let _ = self
+                    .app_handle
+                    .emit("pipeline:error", format!("Audio capture failed: {e}"));
+                *self
+                    .preloaded_config
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = None;
+                self.set_state(PipelineState::Idle);
+                return Ok(());
+            }
+        };
+
+        let audio_vol = handle.get_volume();
+        *self.audio_volume.lock().unwrap_or_else(|e| e.into_inner()) = audio_vol;
+        *self.audio_handle.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
+        *self
+            .recording_start
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
+        tracing::info!(
+            "[Pipeline Timing] Audio capture ready: {}ms",
+            setup_start.elapsed().as_millis()
+        );
+
+        *self
+            .preloaded_app_ctx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(app_detector::detect_current_app());
+        let dict_words = self
+            .app_handle
+            .state::<storage::DictionaryStore>()
+            .words()
+            .await;
+        *self
+            .preloaded_dictionary
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(dict_words);
+
         // P0-3: Pre-connect STT provider before spawning task
         let stt_api_key = if config_data.stt_provider == "cloud" {
             self.app_handle
@@ -539,6 +572,14 @@ impl PipelineHandle {
             let _ = self
                 .app_handle
                 .emit("pipeline:error", format!("STT connection failed: {e}"));
+            if let Some(mut handle) = self
+                .audio_handle
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take()
+            {
+                handle.stop();
+            }
             *self
                 .preloaded_config
                 .lock()
@@ -555,49 +596,21 @@ impl PipelineHandle {
             return Ok(());
         }
 
-        // Start audio capture on dedicated thread
-        let config = AudioConfig::default();
-        let (handle, mut audio_rx) = match AudioCaptureHandle::start(config) {
-            Ok(result) => result,
-            Err(e) => {
-                tracing::error!("Audio capture failed: {}", e);
-                let _ = self
-                    .app_handle
-                    .emit("pipeline:error", format!("Audio capture failed: {e}"));
-                *self
-                    .preloaded_config
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner()) = None;
-                *self
-                    .preloaded_app_ctx
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner()) = None;
-                *self
-                    .preloaded_dictionary
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner()) = None;
-                self.set_state(PipelineState::Idle);
-                return Ok(());
-            }
-        };
-
-        // Store the audio handle's volume reference.
         // Check abort_flag first — if abort() was called while we were connecting
         // to STT, don't store the handle (it would be orphaned with nobody to stop it).
         if self.abort_flag.load(Ordering::SeqCst) {
-            tracing::info!("Pipeline aborted during setup, discarding audio capture");
-            // handle drops here, stopping the capture thread
+            tracing::info!("Pipeline aborted during setup, stopping audio capture");
+            if let Some(mut handle) = self
+                .audio_handle
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take()
+            {
+                handle.stop();
+            }
             self.set_state(PipelineState::Idle);
             return Ok(());
         }
-        let audio_vol = handle.get_volume();
-        *self.audio_volume.lock().unwrap_or_else(|e| e.into_inner()) = audio_vol;
-        *self.audio_handle.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
-
-        *self
-            .recording_start
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
 
         // Volume monitoring task
         let app_handle = self.app_handle.clone();
